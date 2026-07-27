@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from morrow import World
+from morrow import PatternCensus, World
 
 
 class WorldTests(unittest.TestCase):
@@ -18,12 +18,42 @@ class WorldTests(unittest.TestCase):
         moved = world._transport(world.body, world._neighbor_mean(world.body))
         self.assertTrue(np.isclose(moved.sum(), world.body.sum(), rtol=0.0, atol=1e-10))
 
-    def test_structure_detection_wraps_at_world_edge(self) -> None:
+    def test_component_detection_wraps_at_world_edge(self) -> None:
         body = np.zeros((3, 3))
         body[0, 0] = body[0, 2] = body[1, 0] = body[1, 2] = 1.0
-        world = World(body=body, resource=np.zeros_like(body), waste=np.zeros_like(body))
+        world = World(body, np.zeros_like(body), np.zeros_like(body))
         self.assertEqual(world.localized_structures(threshold=0.5, min_cells=4), [4])
 
-    def test_empty_world_has_no_structures(self) -> None:
-        world = World(body=np.zeros((3, 3)), resource=np.zeros((3, 3)), waste=np.zeros((3, 3)))
-        self.assertEqual(world.localized_structures(), [])
+    def test_census_records_creation_persistence_and_destruction(self) -> None:
+        body = np.zeros((5, 5)); body[1:3, 1:3] = 1.0
+        world = World(body, np.zeros_like(body), np.zeros_like(body))
+        census = PatternCensus()
+        census.update(world.components(threshold=0.5))
+        census.update(world.components(threshold=0.5))
+        world.body[:] = 0.0
+        census.update(world.components())
+        self.assertEqual((census.created, census.persistent, census.destroyed), (1, 1, 1))
+
+    def test_metabolism_outlasts_starvation_control(self) -> None:
+        body = np.zeros((9, 9)); body[3:6, 3:6] = 1.0
+        world = World(body, np.full_like(body, 2.0), np.zeros_like(body))
+        active, starved = world.maintenance_probe(steps=30)
+        self.assertGreater(active, starved)
+
+    def test_perturbation_probe_remains_a_mass_conserving_comparison(self) -> None:
+        world = World.seeded(seed=3)
+        self.assertGreater(world.perturbation_probe(steps=20), 0.0)
+
+    def test_reproduction_scaffold_conserves_body_and_copies_trait(self) -> None:
+        body = np.zeros((24, 24)); body[10:13, 10:13] = 2.0
+        world = World(body, np.ones_like(body), np.zeros_like(body), body * 0.7, rng=np.random.default_rng(4))
+        census = PatternCensus(); census.update(world.components())
+        before = world.body.sum()
+        births = world.reproduce_scaffold(census, tick=0, mutation=0.0)
+        self.assertEqual(len(births), 1)
+        self.assertTrue(np.isclose(world.body.sum(), before, atol=1e-10))
+        self.assertAlmostEqual(births[0].trait, 0.7)
+
+
+if __name__ == "__main__":
+    unittest.main()
