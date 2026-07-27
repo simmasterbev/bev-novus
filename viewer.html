@@ -58,7 +58,7 @@
       <label>Dormancy threshold <output id="dormancy-threshold-value">0.08</output><input id="dormancy-threshold" type="range" min="0" max="0.3" step="0.01" value="0.08"></label>
       <label>Dormancy cost <output id="dormancy-cost-value">0.15</output><input id="dormancy-cost" type="range" min="0" max="1" step="0.05" value="0.15"></label>
     </div>
-    <div class="controls"><button id="apply-config" type="button">Apply starting world</button><span>Rule sliders apply on the next step; starting-world fields apply when reset.</span></div>
+    <div class="controls"><button id="apply-config" type="button">Apply starting world</button><button id="high-flux" type="button">Load High-Flux Oasis</button><button id="export-config" type="button">Export config</button><label>Import config <input id="config-file" type="file" accept="application/json"></label><span>Rule sliders apply on the next step; starting-world fields apply when reset.</span></div>
   </details>
   <canvas id="world" width="96" height="72" aria-label="Bev Novus world: body matter is green, resource is blue, waste is red."></canvas>
   <canvas id="history" width="96" height="24" aria-label="History of body mass, structures, and births."></canvas>
@@ -87,12 +87,29 @@
       regrowth: value('regrowth'), capacity: value('capacity'), wasteDecay: value('waste-decay'), wasteDiffusion: value('waste-diffusion'),
       dormancyThreshold: value('dormancy-threshold'), dormancyCost: value('dormancy-cost')
     }; }
+    const startingIds = ['world-seed', 'resource-patches', 'body-patches'];
+    function configSnapshot(name = 'custom') {
+      const values = Object.fromEntries([...ruleIds, ...startingIds].map(id => [id, document.getElementById(id).value]));
+      return { schema: 'bev-novus-config/v1', name, values, toggles: { reproduce: reproduce.checked, recycle: recycle.checked, spatial: spatial.checked, mutate: mutate.checked } };
+    }
+    function applySnapshot(snapshot) {
+      if (!snapshot || typeof snapshot !== 'object' || !snapshot.values) throw new Error('Invalid Bev Novus config');
+      [...ruleIds, ...startingIds].forEach(id => { if (snapshot.values[id] !== undefined) document.getElementById(id).value = snapshot.values[id]; });
+      if (snapshot.toggles) Object.entries(snapshot.toggles).forEach(([id, checked]) => { if (document.getElementById(id)) document.getElementById(id).checked = Boolean(checked); });
+      refreshParameterLabels(); reset();
+    }
+    function loadHighFlux() { applySnapshot({ name: 'High-Flux Oasis', values: {
+      'world-seed': 1, 'resource-patches': 7, 'body-patches': 5, 'resource-strength': 1, 'body-strength': 1.1, 'source-scale': 2.5,
+      metabolism: .025, yield: .72, decay: .024, waste: .45, 'recycle-rate': .08, diffusion: .23, steering: 3.8, interval: 190,
+      fraction: .24, 'mutation-scale': .04, regrowth: .022, capacity: 1, 'waste-decay': .002, 'waste-diffusion': .35,
+      'dormancy-threshold': .02, 'dormancy-cost': .2
+    }, toggles: { reproduce: true, recycle: true, spatial: true, mutate: true } }); }
 
     function index(y, x) { return ((y + height) % height) * width + ((x + width) % width); }
     function mass() { return body.reduce((sum, v, i) => sum + v + resource[i] + waste[i], 0); }
     function structures() {
       const peak = Math.max(...body); if (peak <= 0) return 0;
-      const cutoff = peak * .25, seen = new Uint8Array(cells); let count = 0;
+      const cutoff = peak * .10, seen = new Uint8Array(cells); let count = 0;
       for (let i = 0; i < cells; i++) if (body[i] >= cutoff && !seen[i]) {
         const stack = [i]; let size = 0; seen[i] = 1;
         while (stack.length) {
@@ -101,7 +118,7 @@
             const next = index(y + dy, x + dx); if (body[next] >= cutoff && !seen[next]) { seen[next] = 1; stack.push(next); }
           });
         }
-        if (size >= 4) count++;
+        if (size >= 2) count++;
       }
       return count;
     }
@@ -196,6 +213,15 @@
     }
     ruleIds.forEach(id => document.getElementById(id).oninput = refreshParameterLabels);
     document.getElementById('apply-config').onclick = reset;
+    document.getElementById('high-flux').onclick = loadHighFlux;
+    document.getElementById('export-config').onclick = () => {
+      const blob = new Blob([JSON.stringify(configSnapshot(), null, 2)], { type: 'application/json' });
+      const link = document.createElement('a'); link.href = URL.createObjectURL(blob); link.download = `bev-novus-config-${tick}.json`; link.click(); URL.revokeObjectURL(link.href);
+    };
+    document.getElementById('config-file').onchange = event => {
+      const file = event.target.files[0]; if (!file) return;
+      const reader = new FileReader(); reader.onload = () => { try { applySnapshot(JSON.parse(reader.result)); } catch (error) { stats.value = `config error: ${error.message}`; } }; reader.readAsText(file);
+    };
     refreshParameterLabels();
     reset(); animate();
   </script>

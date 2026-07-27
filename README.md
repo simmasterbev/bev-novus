@@ -40,7 +40,7 @@ The run prints mass drift and writes frames to `output/`. Most image viewers can
 
 ## Live view
 
-Open `viewer.html` in a modern browser. It runs the three-field world continuously; green is body matter, blue resource, and red waste. It reports observed structures and autonomous birth/viability events. Expand “World rules and starting configuration” to tune the rules; use “Apply starting world” after changing seed or patch settings.
+Open `viewer.html` in a modern browser. It runs the three-field world continuously; green is body matter, blue resource, and red waste. It reports observed structures and autonomous birth/viability events. Expand “World rules and starting configuration” to tune the rules; use “Apply starting world” after changing seed or patch settings. The panel includes the “High-Flux Oasis” preset and JSON config export/import.
 
 For a reproducible custom run:
 
