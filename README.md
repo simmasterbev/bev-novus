@@ -38,6 +38,16 @@ Open `viewer.html` in a modern browser. It runs the three-field world continuous
 python -m unittest -v
 ```
 
+## v1.1 experiments
+
+```powershell
+python experiments.py --steps 480
+```
+
+This writes a reproducible sweep plus no-mutation, no-recycling, well-mixed, and no-reproduction controls to `experiment-report.json`.
+
+Open `dashboard.html` and select that report to compare viable births, persistent patterns, and trait diversity.
+
 ## What v1 does not claim
 
 Long-run open-endedness, robust multicellular individuality, and intrinsic ecological innovation remain empirical questions for longer experiments—not features asserted by this release.

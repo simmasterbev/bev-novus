@@ -3,6 +3,7 @@ import unittest
 import numpy as np
 
 from morrow import PatternCensus, World, ecology_metrics, evolvability_metrics
+from experiments import run_condition
 
 
 class WorldTests(unittest.TestCase):
@@ -72,6 +73,11 @@ class WorldTests(unittest.TestCase):
         ecology, evolution = ecology_metrics(world, census), evolvability_metrics(world, census)
         self.assertGreater(ecology["resource_patchiness"], 0.0)
         self.assertGreaterEqual(evolution["mean_mutation_rate"], 0.0)
+
+    def test_control_condition_returns_measurable_result(self) -> None:
+        result = run_condition("test", 1, steps=30, reproduce=False)
+        self.assertEqual(result.label, "test")
+        self.assertLess(result.mass_drift, 1e-8)
 
 
 if __name__ == "__main__":
