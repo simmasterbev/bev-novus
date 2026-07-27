@@ -53,7 +53,10 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
                   recycle_rate: float = 0.025, seed_interval: int = 60, source_scale: float = 1.5,
                   steering: float = 2.0, seed_fraction: float = 0.22, mutation_scale: float = 0.01,
                   resource_patches: int = 7, body_patches: int = 5,
-                  resource_strength: float = 1.0, body_strength: float = 0.55) -> Result:
+                  resource_strength: float = 1.0, body_strength: float = 0.55,
+                  resource_regrowth: float = 0.006, resource_capacity: float = 1.0,
+                  waste_decay: float = 0.002, waste_diffusion: float = 0.12,
+                  dormancy_threshold: float = 0.08, dormancy_cost: float = 0.15) -> Result:
     world, census = World.seeded(seed=seed, source_scale=source_scale, resource_patches=resource_patches,
                                  body_patches=body_patches, resource_strength=resource_strength,
                                  body_strength=body_strength), PatternCensus()
@@ -61,6 +64,9 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
     world.steering = steering
     world.waste_inhibition, world.recycle_rate, world.seed_interval = waste_inhibition, recycle_rate, seed_interval
     world.seed_fraction, world.mutation_scale = seed_fraction, mutation_scale
+    world.resource_regrowth, world.resource_capacity = resource_regrowth, resource_capacity
+    world.waste_decay, world.waste_diffusion = waste_decay, waste_diffusion
+    world.dormancy_threshold, world.dormancy_cost = dormancy_threshold, dormancy_cost
     if not mutate:
         world.mutation_mass[:] = world.body * 0.005
     if not recycle:
@@ -81,7 +87,7 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
     eco, evo = ecology_metrics(world, census), evolvability_metrics(world, census)
     individual, collective = individuality_metrics(world, census), collective_metrics(world, census)
     return Result(label, seed, len(census.current), len(world.births), int(evo["viable_births"]),
-                  evo["trait_diversity"], eco["occupied_trait_niches"], abs(world.total_mass - baseline),
+                  evo["trait_diversity"], eco["occupied_trait_niches"], abs(world.total_mass - baseline - world.external_delta),
                   individual["compactness"], individual["boundary_ratio"], individual["ambiguous_identity"], collective["multi_core_groups"])
 
 

@@ -160,6 +160,13 @@ class World:
     seed_interval: int = 60
     seed_fraction: float = 0.22
     mutation_scale: float = 0.01
+    resource_regrowth: float = 0.006
+    resource_capacity: float = 1.0
+    waste_decay: float = 0.002
+    waste_diffusion: float = 0.12
+    dormancy_threshold: float = 0.08
+    dormancy_cost: float = 0.15
+    external_delta: float = 0.0
 
     def __post_init__(self) -> None:
         if self.trait_mass is None:
@@ -216,10 +223,17 @@ class World:
         self.body += growth
         self.trait_mass += traits * growth
         self.waste += (1.0 - self.body_yield) * intake
-        decay = self.decay_rate * self.body
+        dormant = self.body < self.dormancy_threshold
+        decay = self.decay_rate * self.body * np.where(dormant, self.dormancy_cost, 1.0)
         self.body -= decay
         self.trait_mass -= traits * decay
         self.waste += decay
+        regrown = self.resource_regrowth * self.resource_source * np.maximum(self.resource_capacity - self.resource, 0.0)
+        self.resource += regrown
+        waste_cleaned = self.waste_decay * self.waste
+        self.waste -= waste_cleaned
+        self.waste = (1.0 - self.waste_diffusion) * self.waste + self.waste_diffusion * self._neighbor_mean(self.waste)
+        self.external_delta += float(regrown.sum() - waste_cleaned.sum())
         recycled = np.minimum(self.waste, self.recycle_rate * self.resource_source * self.waste)
         self.waste -= recycled
         self.resource += recycled
@@ -349,7 +363,11 @@ class World:
                      self.resource_source.copy(), self.metabolism_rate, self.body_yield, self.decay_rate, self.diffusion, self.steering,
                      np.random.default_rng(0), ticks=self.ticks, autonomous_reproduction=self.autonomous_reproduction,
                      waste_inhibition=self.waste_inhibition, recycle_rate=self.recycle_rate, seed_interval=self.seed_interval,
-                     seed_fraction=self.seed_fraction, mutation_scale=self.mutation_scale)
+                     seed_fraction=self.seed_fraction, mutation_scale=self.mutation_scale,
+                     resource_regrowth=self.resource_regrowth, resource_capacity=self.resource_capacity,
+                     waste_decay=self.waste_decay, waste_diffusion=self.waste_diffusion,
+                     dormancy_threshold=self.dormancy_threshold, dormancy_cost=self.dormancy_cost,
+                     external_delta=self.external_delta)
 
     def _neighbor_mean(self, field: np.ndarray) -> np.ndarray:
         return (field + np.roll(field, 1, 0) + np.roll(field, -1, 0) + np.roll(field, 1, 1) + np.roll(field, -1, 1)) / 5.0
@@ -381,6 +399,9 @@ def run(steps: int, every: int, output: Path, seed: int, probe: bool = False, co
                 "recycle_rate", "seed_interval", "seed_fraction", "mutation_scale"):
         if key in config:
             setattr(world, key, config[key])
+    for key in ("resource_regrowth", "resource_capacity", "waste_decay", "waste_diffusion", "dormancy_threshold", "dormancy_cost"):
+        if key in config:
+            setattr(world, key, config[key])
     census.update(world.components())
     baseline = world.total_mass
     for tick in range(steps + 1):
@@ -399,7 +420,7 @@ def run(steps: int, every: int, output: Path, seed: int, probe: bool = False, co
     repair = world.perturbation_probe() if probe else float("nan")
     viable = sum(birth.viable for birth in world.births)
     ecology, evolution = ecology_metrics(world, census), evolvability_metrics(world, census)
-    print(f"steps={steps} mass={world.total_mass:.9f} drift={abs(world.total_mass-baseline):.3e} "
+    print(f"steps={steps} mass={world.total_mass:.9f} balance={abs(world.total_mass-baseline-world.external_delta):.3e} "
           f"live={len(census.current)} created={census.created} destroyed={census.destroyed} "
           f"births={len(world.births)} viable={viable} maintenance={active:.3f}/{starved:.3f} repair={repair:.3f} "
           f"niches={ecology['occupied_trait_niches']:.0f} novelty={evolution['novel_viable_birth_fraction']:.2f}")
@@ -428,6 +449,12 @@ def main() -> None:
     parser.add_argument("--resource-strength", type=float, default=1.0)
     parser.add_argument("--body-strength", type=float, default=0.55)
     parser.add_argument("--source-scale", type=float, default=1.5)
+    parser.add_argument("--resource-regrowth", type=float, default=0.006)
+    parser.add_argument("--resource-capacity", type=float, default=1.0)
+    parser.add_argument("--waste-decay", type=float, default=0.002)
+    parser.add_argument("--waste-diffusion", type=float, default=0.12)
+    parser.add_argument("--dormancy-threshold", type=float, default=0.08)
+    parser.add_argument("--dormancy-cost", type=float, default=0.15)
     args = parser.parse_args()
     if args.steps < 0 or args.every < 1:
         parser.error("--steps must be non-negative and --every must be at least 1")

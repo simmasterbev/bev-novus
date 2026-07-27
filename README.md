@@ -2,11 +2,12 @@
 
 Bev Novus is a small, inspectable artificial-life world inspired by Lenia, Flow-Lenia, Avida, and artificial chemistry research.
 
-Version 2.1 includes the initial roadmap audit and expanded experiment controls. The live viewer now exposes a parameter lab for:
+Version 2.2 adds renewable ecology and dormancy on top of the initial roadmap audit and expanded experiment controls. The live viewer now exposes a parameter lab for:
 
 - metabolism, body yield, decay, waste inhibition, recycling, diffusion, and steering;
 - seed interval, seed fraction, mutation scale, and mutation/recycling toggles;
 - deterministic starting-world seed, resource/body patch counts, patch strengths, and source scale.
+- resource regrowth/capacity, waste decay/diffusion, and dormancy threshold/cost.
 
 The same core rules are available from `morrow.py` flags, so browser exploration can be reproduced from the command line.
 
@@ -22,6 +23,7 @@ The world includes:
 - local resource-rich bodies autonomously emit offspring seeds and inherit a two-parameter description (behavior and mutability);
 - birth records measure trait resemblance and short-horizon offspring viability;
 - spatial resource recycling and waste inhibition create a minimal ecology with measurable patchiness and trait niches;
+- resource patches can regrow toward a carrying capacity; waste can decay and diffuse; low-mass patterns can enter a low-cost dormant regime;
 - lineage, diversity, novelty, and inherited mutation-rate measurements instrument evolvability experiments;
 - frames are written as portable PPM images with waste in red, body in green, and resource in blue.
 

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bev Novus 2.0 live world</title>
+  <title>Bev Novus 2.2 live world</title>
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; }
     body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; background: #101319; color: #e8edf5; }
@@ -20,7 +20,7 @@
   </style>
 </head>
 <body>
-  <h1>Bev Novus 2.1 live world</h1>
+  <h1>Bev Novus 2.2 live world</h1>
   <div class="controls">
     <button id="pause" type="button">Pause</button>
     <button id="step" type="button">Step</button>
@@ -51,6 +51,12 @@
       <label>Seed interval <output id="interval-value">120</output><input id="interval" type="range" min="20" max="240" step="10" value="120"></label>
       <label>Seed fraction <output id="fraction-value">0.22</output><input id="fraction" type="range" min="0.05" max="0.5" step="0.01" value="0.22"></label>
       <label>Mutation scale <output id="mutation-scale-value">0.010</output><input id="mutation-scale" type="range" min="0" max="0.1" step="0.005" value="0.01"></label>
+      <label>Resource regrowth <output id="regrowth-value">0.006</output><input id="regrowth" type="range" min="0" max="0.03" step="0.001" value="0.006"></label>
+      <label>Resource capacity <output id="capacity-value">1.00</output><input id="capacity" type="range" min="0.2" max="3" step="0.1" value="1"></label>
+      <label>Waste decay <output id="waste-decay-value">0.002</output><input id="waste-decay" type="range" min="0" max="0.02" step="0.001" value="0.002"></label>
+      <label>Waste diffusion <output id="waste-diffusion-value">0.12</output><input id="waste-diffusion" type="range" min="0" max="0.5" step="0.01" value="0.12"></label>
+      <label>Dormancy threshold <output id="dormancy-threshold-value">0.08</output><input id="dormancy-threshold" type="range" min="0" max="0.3" step="0.01" value="0.08"></label>
+      <label>Dormancy cost <output id="dormancy-cost-value">0.15</output><input id="dormancy-cost" type="range" min="0" max="1" step="0.05" value="0.15"></label>
     </div>
     <div class="controls"><button id="apply-config" type="button">Apply starting world</button><span>Rule sliders apply on the next step; starting-world fields apply when reset.</span></div>
   </details>
@@ -67,17 +73,19 @@
     const speedValue = document.getElementById('speed-value');
     const stats = document.getElementById('stats');
     const reproduce = document.getElementById('reproduce'), recycle = document.getElementById('recycle'), spatial = document.getElementById('spatial'), mutate = document.getElementById('mutate');
-    const ruleIds = ['resource-strength', 'body-strength', 'source-scale', 'metabolism', 'yield', 'decay', 'waste', 'recycle-rate', 'diffusion', 'steering', 'interval', 'fraction', 'mutation-scale'];
+    const ruleIds = ['resource-strength', 'body-strength', 'source-scale', 'metabolism', 'yield', 'decay', 'waste', 'recycle-rate', 'diffusion', 'steering', 'interval', 'fraction', 'mutation-scale', 'regrowth', 'capacity', 'waste-decay', 'waste-diffusion', 'dormancy-threshold', 'dormancy-cost'];
     let randomState = 1;
     const history = document.getElementById('history'), historyContext = history.getContext('2d');
-    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, birthLog, historyLog;
+    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog;
 
     function random() { randomState = (1664525 * randomState + 1013904223) >>> 0; return randomState / 4294967296; }
     function value(id) { return Number(document.getElementById(id).value); }
     function settings() { return {
       resourceStrength: value('resource-strength'), bodyStrength: value('body-strength'), sourceScale: value('source-scale'),
       metabolism: value('metabolism'), bodyYield: value('yield'), decay: value('decay'), waste: value('waste'), recycleRate: value('recycle-rate'),
-      diffusion: value('diffusion'), steering: value('steering'), interval: Math.max(1, value('interval')), fraction: value('fraction'), mutationScale: value('mutation-scale')
+      diffusion: value('diffusion'), steering: value('steering'), interval: Math.max(1, value('interval')), fraction: value('fraction'), mutationScale: value('mutation-scale'),
+      regrowth: value('regrowth'), capacity: value('capacity'), wasteDecay: value('waste-decay'), wasteDiffusion: value('waste-diffusion'),
+      dormancyThreshold: value('dormancy-threshold'), dormancyCost: value('dormancy-cost')
     }; }
 
     function index(y, x) { return ((y + height) % height) * width + ((x + width) % width); }
@@ -114,7 +122,7 @@
       gaussian(resource, value('resource-patches'), 6, 16, config.resourceStrength); gaussian(source, value('resource-patches'), 6, 16, config.resourceStrength, config.sourceScale); gaussian(body, value('body-patches'), 2, 5, config.bodyStrength);
       if (!spatial.checked) resource.fill(resource.reduce((a, b) => a + b, 0) / cells);
       for (let i = 0; i < cells; i++) { traitMass[i] = body[i] * (.35 + .3 * random()); mutationMass[i] = body[i] * (.02 + .06 * random()); }
-      tick = 0; initialMass = mass(); draw();
+      tick = 0; environmentDelta = 0; initialMass = mass(); draw();
     }
     function step() {
       const config = settings();
@@ -137,9 +145,11 @@
         const trait = body[i] > 1e-12 ? traitMass[i] / body[i] : .5, mutationRate = body[i] > 1e-12 ? mutationMass[i] / body[i] : .04;
         const intake = Math.min(resource[i], config.metabolism * (.5 + trait) * body[i] * resource[i]), growth = config.bodyYield * intake;
         resource[i] -= intake; body[i] += growth; traitMass[i] += trait * growth; mutationMass[i] += mutationRate * growth; waste[i] += (1 - config.bodyYield) * intake;
-        const decay = config.decay * body[i]; body[i] -= decay; traitMass[i] -= trait * decay; mutationMass[i] -= mutationRate * decay; waste[i] += decay;
+        const decay = config.decay * body[i] * (body[i] < config.dormancyThreshold ? config.dormancyCost : 1); body[i] -= decay; traitMass[i] -= trait * decay; mutationMass[i] -= mutationRate * decay; waste[i] += decay;
+        const regrown = config.regrowth * source[i] * Math.max(0, config.capacity - resource[i]), cleaned = config.wasteDecay * waste[i]; resource[i] += regrown; waste[i] -= cleaned; environmentDelta += regrown - cleaned;
         if (recycle.checked) { const recovered = Math.min(waste[i], config.recycleRate * source[i] * waste[i]); waste[i] -= recovered; resource[i] += recovered; }
       }
+      if (config.wasteDiffusion > 0) { const mixed = new Float64Array(cells); for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) { const i = index(y, x); mixed[i] = (waste[i] + waste[index(y - 1, x)] + waste[index(y + 1, x)] + waste[index(y, x - 1)] + waste[index(y, x + 1)]) / 5; } for (let i = 0; i < cells; i++) waste[i] = (1 - config.wasteDiffusion) * waste[i] + config.wasteDiffusion * mixed[i]; }
       tick++;
       if (reproduce.checked && tick % config.interval === 0) bud();
       for (const birth of birthLog) if (!birth.viable && tick - birth.tick >= 30) {
@@ -174,7 +184,7 @@
       historyContext.strokeStyle = '#77c66e'; historyContext.beginPath(); historyLog.forEach((row, i) => historyContext.lineTo(i, 24 - Math.min(23, row[0] / 100))); historyContext.stroke();
       historyContext.strokeStyle = '#73a7ff'; historyContext.beginPath(); historyLog.forEach((row, i) => historyContext.lineTo(i, 24 - Math.min(23, row[1] * 8))); historyContext.stroke();
       const viable = birthLog.filter(birth => birth.viable).length;
-      stats.value = `step ${tick} · structures ${structures()} · births ${birthLog.length}/${viable} viable · mass drift ${(mass() - initialMass).toExponential(2)}`;
+      stats.value = `step ${tick} · structures ${structures()} · births ${birthLog.length}/${viable} viable · balance ${(mass() - initialMass - environmentDelta).toExponential(2)}`;
     }
     function animate() { if (running) for (let i = 0; i < +speed.value; i++) step(); draw(); requestAnimationFrame(animate); }
     pause.onclick = () => { running = !running; pause.textContent = running ? 'Pause' : 'Start'; };
