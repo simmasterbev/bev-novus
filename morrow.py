@@ -158,6 +158,8 @@ class World:
     waste_inhibition: float = 0.45
     recycle_rate: float = 0.025
     seed_interval: int = 60
+    seed_fraction: float = 0.22
+    mutation_scale: float = 0.01
 
     def __post_init__(self) -> None:
         if self.trait_mass is None:
@@ -168,7 +170,9 @@ class World:
             self.resource_source = np.ones_like(self.body)
 
     @classmethod
-    def seeded(cls, height: int = 72, width: int = 96, seed: int = 1, source_scale: float = 1.5) -> "World":
+    def seeded(cls, height: int = 72, width: int = 96, seed: int = 1, source_scale: float = 1.5,
+               resource_patches: int = 7, body_patches: int = 5,
+               resource_strength: float = 1.0, body_strength: float = 0.55) -> "World":
         rng = np.random.default_rng(seed)
         y, x = np.mgrid[:height, :width]
         resource = np.zeros((height, width), dtype=float)
@@ -176,13 +180,13 @@ class World:
         traits = np.zeros_like(resource)
         mutability = np.zeros_like(resource)
         source = np.zeros_like(resource)
-        for _ in range(7):
+        for _ in range(resource_patches):
             cy, cx, radius = rng.uniform(0, height), rng.uniform(0, width), rng.uniform(6, 16)
-            resource += np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / radius**2)
-            source += np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / (radius * source_scale) ** 2)
-        for _ in range(5):
+            resource += resource_strength * np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / radius**2)
+            source += resource_strength * np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / (radius * source_scale) ** 2)
+        for _ in range(body_patches):
             cy, cx, radius = rng.uniform(0, height), rng.uniform(0, width), rng.uniform(2, 5)
-            patch = 0.55 * np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / radius**2)
+            patch = body_strength * np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / radius**2)
             body += patch
             traits += patch * rng.uniform(0.35, 0.65)
             mutability += patch * rng.uniform(0.02, 0.08)
@@ -281,7 +285,7 @@ class World:
         target = (round(parent.center[0] + direction[0]) % height, round(parent.center[1] + direction[1]) % width)
         donor_y = np.array([cell // width for cell in parent.cells])
         donor_x = np.array([cell % width for cell in parent.cells])
-        donation = self.body[donor_y, donor_x] * 0.22
+        donation = self.body[donor_y, donor_x] * self.seed_fraction
         donated = float(donation.sum())
         if donated <= 0.0:
             return []
@@ -292,7 +296,7 @@ class World:
         self.mutation_mass[donor_y, donor_x] -= donation * parent_mutation
         mutation = parent_mutation if mutation is None else mutation
         child_trait = float(np.clip(parent_trait + self.rng.normal(0.0, mutation), 0.0, 1.0))
-        child_mutation = float(np.clip(parent_mutation + self.rng.normal(0.0, 0.01), 0.005, 0.2))
+        child_mutation = float(np.clip(parent_mutation + self.rng.normal(0.0, self.mutation_scale), 0.005, 0.2))
         kernel = np.array(((1.0, 2.0, 1.0), (2.0, 4.0, 2.0), (1.0, 2.0, 1.0))) / 16.0
         for dy in range(-1, 2):
             for dx in range(-1, 2):
@@ -344,7 +348,8 @@ class World:
         return World(self.body.copy(), self.resource.copy(), self.waste.copy(), self.trait_mass.copy(), self.mutation_mass.copy(),
                      self.resource_source.copy(), self.metabolism_rate, self.body_yield, self.decay_rate, self.diffusion, self.steering,
                      np.random.default_rng(0), ticks=self.ticks, autonomous_reproduction=self.autonomous_reproduction,
-                     waste_inhibition=self.waste_inhibition, recycle_rate=self.recycle_rate, seed_interval=self.seed_interval)
+                     waste_inhibition=self.waste_inhibition, recycle_rate=self.recycle_rate, seed_interval=self.seed_interval,
+                     seed_fraction=self.seed_fraction, mutation_scale=self.mutation_scale)
 
     def _neighbor_mean(self, field: np.ndarray) -> np.ndarray:
         return (field + np.roll(field, 1, 0) + np.roll(field, -1, 0) + np.roll(field, 1, 1) + np.roll(field, -1, 1)) / 5.0
@@ -367,8 +372,15 @@ class World:
             stream.write(pixels.tobytes())
 
 
-def run(steps: int, every: int, output: Path, seed: int, probe: bool = False) -> World:
-    world, census = World.seeded(seed=seed), PatternCensus()
+def run(steps: int, every: int, output: Path, seed: int, probe: bool = False, config: dict | None = None) -> World:
+    config = config or {}
+    world, census = World.seeded(seed=seed, **{key: config[key] for key in (
+        "source_scale", "resource_patches", "body_patches", "resource_strength", "body_strength"
+    ) if key in config}), PatternCensus()
+    for key in ("metabolism_rate", "body_yield", "decay_rate", "diffusion", "steering", "waste_inhibition",
+                "recycle_rate", "seed_interval", "seed_fraction", "mutation_scale"):
+        if key in config:
+            setattr(world, key, config[key])
     census.update(world.components())
     baseline = world.total_mass
     for tick in range(steps + 1):
@@ -401,10 +413,25 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--out", type=Path, default=Path("output"))
     parser.add_argument("--probe", action="store_true", help="run the maintenance-versus-starvation comparison")
+    parser.add_argument("--metabolism-rate", type=float, default=0.07)
+    parser.add_argument("--body-yield", type=float, default=0.72)
+    parser.add_argument("--decay-rate", type=float, default=0.012)
+    parser.add_argument("--waste-inhibition", type=float, default=0.45)
+    parser.add_argument("--recycle-rate", type=float, default=0.025)
+    parser.add_argument("--diffusion", type=float, default=0.18)
+    parser.add_argument("--steering", type=float, default=2.0)
+    parser.add_argument("--seed-interval", type=int, default=60)
+    parser.add_argument("--seed-fraction", type=float, default=0.22)
+    parser.add_argument("--mutation-scale", type=float, default=0.01)
+    parser.add_argument("--resource-patches", type=int, default=7)
+    parser.add_argument("--body-patches", type=int, default=5)
+    parser.add_argument("--resource-strength", type=float, default=1.0)
+    parser.add_argument("--body-strength", type=float, default=0.55)
+    parser.add_argument("--source-scale", type=float, default=1.5)
     args = parser.parse_args()
     if args.steps < 0 or args.every < 1:
         parser.error("--steps must be non-negative and --every must be at least 1")
-    run(args.steps, args.every, args.out, args.seed, args.probe)
+    run(args.steps, args.every, args.out, args.seed, args.probe, vars(args))
 
 
 if __name__ == "__main__":

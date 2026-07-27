@@ -88,6 +88,20 @@ class WorldTests(unittest.TestCase):
         self.assertEqual(result.label, "test")
         self.assertLess(result.mass_drift, 1e-8)
 
+    def test_seeded_world_accepts_starting_configuration(self) -> None:
+        world = World.seeded(seed=4, resource_patches=2, body_patches=1, source_scale=2.0,
+                             resource_strength=1.4, body_strength=0.8)
+        self.assertEqual(world.body.shape, (72, 96))
+        self.assertTrue(np.isfinite(world.total_mass))
+
+    def test_rule_parameters_survive_copy(self) -> None:
+        world = World.seeded(seed=5)
+        world.waste_inhibition, world.recycle_rate = 0.7, 0.04
+        world.seed_fraction, world.mutation_scale = 0.3, 0.02
+        clone = world.copy()
+        self.assertEqual((clone.waste_inhibition, clone.recycle_rate, clone.seed_fraction, clone.mutation_scale),
+                         (0.7, 0.04, 0.3, 0.02))
+
 
 if __name__ == "__main__":
     unittest.main()

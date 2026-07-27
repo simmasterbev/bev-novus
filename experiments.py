@@ -50,10 +50,17 @@ def audit(steps: int = 1000, seeds: tuple[int, ...] = tuple(range(1, 11))) -> di
 def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = True,
                   recycle: bool = True, spatial: bool = True, reproduce: bool = True,
                   metabolism: float = 0.07, diffusion: float = 0.18, waste_inhibition: float = 0.45,
-                  recycle_rate: float = 0.025, seed_interval: int = 60, source_scale: float = 1.5) -> Result:
-    world, census = World.seeded(seed=seed, source_scale=source_scale), PatternCensus()
+                  recycle_rate: float = 0.025, seed_interval: int = 60, source_scale: float = 1.5,
+                  steering: float = 2.0, seed_fraction: float = 0.22, mutation_scale: float = 0.01,
+                  resource_patches: int = 7, body_patches: int = 5,
+                  resource_strength: float = 1.0, body_strength: float = 0.55) -> Result:
+    world, census = World.seeded(seed=seed, source_scale=source_scale, resource_patches=resource_patches,
+                                 body_patches=body_patches, resource_strength=resource_strength,
+                                 body_strength=body_strength), PatternCensus()
     world.metabolism_rate, world.diffusion, world.autonomous_reproduction = metabolism, diffusion, reproduce
+    world.steering = steering
     world.waste_inhibition, world.recycle_rate, world.seed_interval = waste_inhibition, recycle_rate, seed_interval
+    world.seed_fraction, world.mutation_scale = seed_fraction, mutation_scale
     if not mutate:
         world.mutation_mass[:] = world.body * 0.005
     if not recycle:
@@ -83,9 +90,12 @@ def sweep(steps: int = 480, seeds: tuple[int, ...] = (1, 2, 3)) -> list[Result]:
     for metabolism in (0.05, 0.07, 0.09):
         for diffusion in (0.10, 0.18, 0.26):
             for source_scale, seed_interval in ((1.0, 40), (1.5, 60), (2.0, 90)):
-                label = f"metabolism={metabolism:.2f}, diffusion={diffusion:.2f}, patch={source_scale:.1f}, interval={seed_interval}"
-                results.extend(run_condition(label, seed, steps, metabolism=metabolism, diffusion=diffusion,
-                                             source_scale=source_scale, seed_interval=seed_interval) for seed in seeds)
+                for waste_inhibition, recycle_rate in ((0.25, 0.01), (0.45, 0.025), (0.65, 0.05)):
+                    label = (f"metabolism={metabolism:.2f}, diffusion={diffusion:.2f}, patch={source_scale:.1f}, "
+                             f"interval={seed_interval}, waste={waste_inhibition:.2f}, recycle={recycle_rate:.3f}")
+                    results.extend(run_condition(label, seed, steps, metabolism=metabolism, diffusion=diffusion,
+                                                 source_scale=source_scale, seed_interval=seed_interval,
+                                                 waste_inhibition=waste_inhibition, recycle_rate=recycle_rate) for seed in seeds)
     return results
 
 

@@ -2,7 +2,15 @@
 
 Bev Novus is a small, inspectable artificial-life world inspired by Lenia, Flow-Lenia, Avida, and artificial chemistry research.
 
-Version 2.1 includes the initial roadmap audit and expanded experiment controls:
+Version 2.1 includes the initial roadmap audit and expanded experiment controls. The live viewer now exposes a parameter lab for:
+
+- metabolism, body yield, decay, waste inhibition, recycling, diffusion, and steering;
+- seed interval, seed fraction, mutation scale, and mutation/recycling toggles;
+- deterministic starting-world seed, resource/body patch counts, patch strengths, and source scale.
+
+The same core rules are available from `morrow.py` flags, so browser exploration can be reproduced from the command line.
+
+The world includes:
 
 - body matter moves through a local affinity field;
 - resource is converted to body matter and waste;
@@ -30,7 +38,13 @@ The run prints mass drift and writes frames to `output/`. Most image viewers can
 
 ## Live view
 
-Open `viewer.html` in a modern browser. It runs the three-field world continuously; green is body matter, blue resource, and red waste. It reports observed structures and autonomous birth/viability events.
+Open `viewer.html` in a modern browser. It runs the three-field world continuously; green is body matter, blue resource, and red waste. It reports observed structures and autonomous birth/viability events. Expand “World rules and starting configuration” to tune the rules; use “Apply starting world” after changing seed or patch settings.
+
+For a reproducible custom run:
+
+```powershell
+python morrow.py --seed 12 --metabolism-rate 0.08 --waste-inhibition 0.6 --recycle-rate 0.04 --resource-patches 3 --body-patches 2 --source-scale 2.0
+```
 
 ## Check
 
