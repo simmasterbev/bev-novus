@@ -9,12 +9,14 @@
 <svg id="chart" viewBox="0 0 900 420" role="img" aria-label="Experiment comparison chart"></svg>
 <script>
 const chart=document.getElementById('chart'),summary=document.getElementById('summary');
-document.getElementById('file').onchange=async event=>{
- const data=JSON.parse(await event.target.files[0].text()), groups={};
+function render(data){
+ const groups={};
  data.forEach(row=>(groups[row.label]??=[]).push(row));
  const rows=Object.entries(groups).map(([label,items])=>({label,viable:items.reduce((s,x)=>s+x.viable,0)/items.length,live:items.reduce((s,x)=>s+x.live,0)/items.length,diversity:items.reduce((s,x)=>s+x.trait_diversity,0)/items.length}));
  const max=Math.max(1,...rows.flatMap(row=>[row.viable,row.live,row.diversity*10]));
  chart.innerHTML=rows.map((row,i)=>{const y=25+i*40,scale=700/max;return `<text x="10" y="${y+14}" fill="white" font-size="12">${row.label}</text><rect x="195" y="${y}" width="${row.viable*scale}" height="10" fill="#77c66e"/><rect x="195" y="${y+12}" width="${row.live*scale}" height="10" fill="#73a7ff"/><rect x="195" y="${y+24}" width="${row.diversity*10*scale}" height="10" fill="#e5b75b"/>`}).join('');
  summary.textContent='Green: viable births · blue: live patterns · gold: trait diversity ×10.';
-};
+}
+document.getElementById('file').onchange=async event=>render(JSON.parse(await event.target.files[0].text()));
+fetch('experiment-report.json').then(response=>response.json()).then(render).catch(()=>{});
 </script>

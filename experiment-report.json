@@ -1,0 +1,322 @@
+[
+  {
+    "label": "baseline",
+    "seed": 1,
+    "live": 0,
+    "births": 2,
+    "viable": 2,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 1.5006662579253316e-11
+  },
+  {
+    "label": "no mutation",
+    "seed": 1,
+    "live": 0,
+    "births": 3,
+    "viable": 3,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 1.5006662579253316e-11
+  },
+  {
+    "label": "no recycling",
+    "seed": 1,
+    "live": 1,
+    "births": 3,
+    "viable": 3,
+    "trait_diversity": 0.0,
+    "niches": 1.0,
+    "mass_drift": 8.640199666842818e-12
+  },
+  {
+    "label": "well mixed",
+    "seed": 1,
+    "live": 1,
+    "births": 3,
+    "viable": 2,
+    "trait_diversity": 0.0,
+    "niches": 1.0,
+    "mass_drift": 6.366462912410498e-12
+  },
+  {
+    "label": "no reproduction",
+    "seed": 1,
+    "live": 1,
+    "births": 0,
+    "viable": 0,
+    "trait_diversity": 0.0,
+    "niches": 1.0,
+    "mass_drift": 1.5006662579253316e-11
+  },
+  {
+    "label": "metabolism=0.05, diffusion=0.10",
+    "seed": 1,
+    "live": 0,
+    "births": 3,
+    "viable": 3,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 2.7284841053187847e-12
+  },
+  {
+    "label": "metabolism=0.05, diffusion=0.10",
+    "seed": 2,
+    "live": 2,
+    "births": 4,
+    "viable": 3,
+    "trait_diversity": 0.00881396088763664,
+    "niches": 1.0,
+    "mass_drift": 2.2737367544323206e-12
+  },
+  {
+    "label": "metabolism=0.05, diffusion=0.10",
+    "seed": 3,
+    "live": 0,
+    "births": 2,
+    "viable": 2,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 3.183231456205249e-12
+  },
+  {
+    "label": "metabolism=0.05, diffusion=0.18",
+    "seed": 1,
+    "live": 1,
+    "births": 4,
+    "viable": 4,
+    "trait_diversity": 0.0,
+    "niches": 1.0,
+    "mass_drift": 9.094947017729282e-12
+  },
+  {
+    "label": "metabolism=0.05, diffusion=0.18",
+    "seed": 2,
+    "live": 1,
+    "births": 4,
+    "viable": 3,
+    "trait_diversity": 0.0,
+    "niches": 1.0,
+    "mass_drift": 8.185452315956354e-12
+  },
+  {
+    "label": "metabolism=0.05, diffusion=0.18",
+    "seed": 3,
+    "live": 0,
+    "births": 4,
+    "viable": 4,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 1.546140993013978e-11
+  },
+  {
+    "label": "metabolism=0.05, diffusion=0.26",
+    "seed": 1,
+    "live": 1,
+    "births": 6,
+    "viable": 6,
+    "trait_diversity": 0.0,
+    "niches": 1.0,
+    "mass_drift": 1.8189894035458565e-12
+  },
+  {
+    "label": "metabolism=0.05, diffusion=0.26",
+    "seed": 2,
+    "live": 1,
+    "births": 5,
+    "viable": 4,
+    "trait_diversity": 0.0,
+    "niches": 1.0,
+    "mass_drift": 1.3642420526593924e-12
+  },
+  {
+    "label": "metabolism=0.05, diffusion=0.26",
+    "seed": 3,
+    "live": 0,
+    "births": 3,
+    "viable": 3,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 2.7284841053187847e-12
+  },
+  {
+    "label": "metabolism=0.07, diffusion=0.10",
+    "seed": 1,
+    "live": 1,
+    "births": 2,
+    "viable": 2,
+    "trait_diversity": 0.0,
+    "niches": 1.0,
+    "mass_drift": 4.092726157978177e-12
+  },
+  {
+    "label": "metabolism=0.07, diffusion=0.10",
+    "seed": 2,
+    "live": 0,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 4.547473508864641e-12
+  },
+  {
+    "label": "metabolism=0.07, diffusion=0.10",
+    "seed": 3,
+    "live": 0,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 2.7284841053187847e-12
+  },
+  {
+    "label": "metabolism=0.07, diffusion=0.18",
+    "seed": 1,
+    "live": 0,
+    "births": 2,
+    "viable": 2,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 1.5006662579253316e-11
+  },
+  {
+    "label": "metabolism=0.07, diffusion=0.18",
+    "seed": 2,
+    "live": 0,
+    "births": 2,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 1.5006662579253316e-11
+  },
+  {
+    "label": "metabolism=0.07, diffusion=0.18",
+    "seed": 3,
+    "live": 0,
+    "births": 2,
+    "viable": 2,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 2.000888343900442e-11
+  },
+  {
+    "label": "metabolism=0.07, diffusion=0.26",
+    "seed": 1,
+    "live": 0,
+    "births": 3,
+    "viable": 3,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 2.7284841053187847e-12
+  },
+  {
+    "label": "metabolism=0.07, diffusion=0.26",
+    "seed": 2,
+    "live": 1,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 1.0,
+    "mass_drift": 2.7284841053187847e-12
+  },
+  {
+    "label": "metabolism=0.07, diffusion=0.26",
+    "seed": 3,
+    "live": 0,
+    "births": 2,
+    "viable": 2,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 4.547473508864641e-12
+  },
+  {
+    "label": "metabolism=0.09, diffusion=0.10",
+    "seed": 1,
+    "live": 0,
+    "births": 2,
+    "viable": 2,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 5.002220859751105e-12
+  },
+  {
+    "label": "metabolism=0.09, diffusion=0.10",
+    "seed": 2,
+    "live": 0,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 5.4569682106375694e-12
+  },
+  {
+    "label": "metabolism=0.09, diffusion=0.10",
+    "seed": 3,
+    "live": 0,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 1.8189894035458565e-12
+  },
+  {
+    "label": "metabolism=0.09, diffusion=0.18",
+    "seed": 1,
+    "live": 1,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 1.0,
+    "mass_drift": 1.864464138634503e-11
+  },
+  {
+    "label": "metabolism=0.09, diffusion=0.18",
+    "seed": 2,
+    "live": 0,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 1.9554136088117957e-11
+  },
+  {
+    "label": "metabolism=0.09, diffusion=0.18",
+    "seed": 3,
+    "live": 0,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 2.319211489520967e-11
+  },
+  {
+    "label": "metabolism=0.09, diffusion=0.26",
+    "seed": 1,
+    "live": 0,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 3.637978807091713e-12
+  },
+  {
+    "label": "metabolism=0.09, diffusion=0.26",
+    "seed": 2,
+    "live": 0,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 3.637978807091713e-12
+  },
+  {
+    "label": "metabolism=0.09, diffusion=0.26",
+    "seed": 3,
+    "live": 0,
+    "births": 1,
+    "viable": 1,
+    "trait_diversity": 0.0,
+    "niches": 0.0,
+    "mass_drift": 5.4569682106375694e-12
+  }
+]
