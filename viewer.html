@@ -76,7 +76,7 @@
     const ruleIds = ['resource-strength', 'body-strength', 'source-scale', 'metabolism', 'yield', 'decay', 'waste', 'recycle-rate', 'diffusion', 'steering', 'interval', 'fraction', 'mutation-scale', 'regrowth', 'capacity', 'waste-decay', 'waste-diffusion', 'dormancy-threshold', 'dormancy-cost'];
     let randomState = 1;
     const history = document.getElementById('history'), historyContext = history.getContext('2d');
-    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog;
+    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog, faultTick = null, faultPhase = '';
 
     function random() { randomState = (1664525 * randomState + 1013904223) >>> 0; return randomState / 4294967296; }
     function value(id) { return Number(document.getElementById(id).value); }
@@ -107,6 +107,7 @@
 
     function index(y, x) { return ((y + height) % height) * width + ((x + width) % width); }
     function mass() { return body.reduce((sum, v, i) => sum + v + resource[i] + waste[i], 0); }
+    function numericalFault(phase, cell) { faultTick = tick; faultPhase = `${phase}${cell === undefined ? '' : ` at cell ${cell}`}`; running = false; pause.textContent = 'Start'; stats.value = `numerical fault at step ${faultTick}: ${faultPhase}`; return false; }
     function structures() {
       const peak = Math.max(...body); if (peak <= 0) return 0;
       const cutoff = peak * .10, seen = new Uint8Array(cells); let count = 0;
@@ -139,24 +140,28 @@
       gaussian(resource, value('resource-patches'), 6, 16, config.resourceStrength); gaussian(source, value('resource-patches'), 6, 16, config.resourceStrength, config.sourceScale); gaussian(body, value('body-patches'), 2, 5, config.bodyStrength);
       if (!spatial.checked) resource.fill(resource.reduce((a, b) => a + b, 0) / cells);
       for (let i = 0; i < cells; i++) { traitMass[i] = body[i] * (.35 + .3 * random()); mutationMass[i] = body[i] * (.02 + .06 * random()); }
-      tick = 0; environmentDelta = 0; initialMass = mass(); draw();
+      tick = 0; faultTick = null; faultPhase = ''; running = true; pause.textContent = 'Pause'; environmentDelta = 0; initialMass = mass(); draw();
     }
     function step() {
+      if (faultTick !== null) return;
       const config = settings();
       const affinity = new Float64Array(cells), moved = new Float64Array(cells), movedTraits = new Float64Array(cells), movedMutation = new Float64Array(cells);
       for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
         const i = index(y, x);
         affinity[i] = (body[i] + body[index(y - 1, x)] + body[index(y + 1, x)] + body[index(y, x - 1)] + body[index(y, x + 1)]) / 5 + .35 * resource[i] - config.waste * waste[i];
+        if (!Number.isFinite(affinity[i])) return numericalFault('affinity', i);
       }
       for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
         const i = index(y, x), targets = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]];
         const scores = targets.map(([dy, dx], k) => k ? config.steering * (affinity[index(y + dy, x + dx)] - affinity[i]) : 0), peakScore = Math.max(...scores);
+        if (!scores.every(Number.isFinite) || !Number.isFinite(peakScore)) return numericalFault('transport score', i);
         const logits = scores.map(score => Math.exp(Math.max(-60, score - peakScore)));
         const total = logits.reduce((a, b) => a + b, 0);
         targets.forEach(([dy, dx], k) => {
           const share = (1 - config.diffusion) * logits[k] / total + config.diffusion / 5, target = index(y + dy, x + dx);
           moved[target] += body[i] * share; movedTraits[target] += traitMass[i] * share; movedMutation[target] += mutationMass[i] * share;
         });
+        if (!Number.isFinite(moved[i]) || !Number.isFinite(movedTraits[i]) || !Number.isFinite(movedMutation[i])) return numericalFault('transport field', i);
       }
       body = moved; traitMass = movedTraits; mutationMass = movedMutation;
       for (let i = 0; i < cells; i++) {
@@ -166,8 +171,9 @@
         const decay = config.decay * body[i] * (body[i] < config.dormancyThreshold ? config.dormancyCost : 1); body[i] -= decay; traitMass[i] -= trait * decay; mutationMass[i] -= mutationRate * decay; waste[i] += decay;
         const regrown = config.regrowth * source[i] * Math.max(0, config.capacity - resource[i]), cleaned = config.wasteDecay * waste[i]; resource[i] += regrown; waste[i] -= cleaned; environmentDelta += regrown - cleaned;
         if (recycle.checked) { const recovered = Math.min(waste[i], config.recycleRate * source[i] * waste[i]); waste[i] -= recovered; resource[i] += recovered; }
+        if (!Number.isFinite(body[i]) || !Number.isFinite(resource[i]) || !Number.isFinite(waste[i]) || !Number.isFinite(traitMass[i]) || !Number.isFinite(mutationMass[i])) return numericalFault('metabolism field', i);
       }
-      if (config.wasteDiffusion > 0) { const mixed = new Float64Array(cells); for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) { const i = index(y, x); mixed[i] = (waste[i] + waste[index(y - 1, x)] + waste[index(y + 1, x)] + waste[index(y, x - 1)] + waste[index(y, x + 1)]) / 5; } for (let i = 0; i < cells; i++) waste[i] = (1 - config.wasteDiffusion) * waste[i] + config.wasteDiffusion * mixed[i]; }
+      if (config.wasteDiffusion > 0) { const mixed = new Float64Array(cells); for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) { const i = index(y, x); mixed[i] = (waste[i] + waste[index(y - 1, x)] + waste[index(y + 1, x)] + waste[index(y, x - 1)] + waste[index(y, x + 1)]) / 5; } for (let i = 0; i < cells; i++) { waste[i] = (1 - config.wasteDiffusion) * waste[i] + config.wasteDiffusion * mixed[i]; if (!Number.isFinite(waste[i])) return numericalFault('waste diffusion', i); } }
       tick++;
       if (reproduce.checked && tick % config.interval === 0) bud();
       for (const birth of birthLog) if (!birth.viable && tick - birth.tick >= 30) {
@@ -188,6 +194,7 @@
       birthLog.push({ y: targetY, x: targetX, tick, viable: false });
     }
     function draw() {
+      if (faultTick !== null) return;
       const maxBody = Math.max(...body, 1e-9), maxResource = Math.max(...resource, 1e-9), maxWaste = Math.max(...waste, 1e-9);
       for (let i = 0; i < cells; i++) {
         image.data[4 * i] = Math.min(255, 255 * waste[i] / maxWaste);
