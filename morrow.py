@@ -375,8 +375,10 @@ class World:
     def _transport(self, mass: np.ndarray, affinity: np.ndarray, steering: np.ndarray | float | None = None) -> np.ndarray:
         directions = ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))
         steering = self.steering if steering is None else steering
-        logits = [np.ones_like(affinity)] + [np.exp(steering * (np.roll(affinity, (-dy, -dx), axis=(0, 1)) - affinity)) for dy, dx in directions[1:]]
-        weights = np.stack(logits)
+        scores = [np.zeros_like(affinity)] + [steering * (np.roll(affinity, (-dy, -dx), axis=(0, 1)) - affinity) for dy, dx in directions[1:]]
+        scores = np.stack(scores)
+        scores -= scores.max(axis=0, keepdims=True)
+        weights = np.exp(np.clip(scores, -60.0, 0.0))
         weights = (1.0 - self.diffusion) * weights / weights.sum(axis=0, keepdims=True) + self.diffusion / 5.0
         return sum(np.roll(mass * weight, direction, axis=(0, 1)) for weight, direction in zip(weights, directions))
 

@@ -150,7 +150,8 @@
       }
       for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
         const i = index(y, x), targets = [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]];
-        const logits = targets.map(([dy, dx], k) => k ? Math.exp(config.steering * (affinity[index(y + dy, x + dx)] - affinity[i])) : 1);
+        const scores = targets.map(([dy, dx], k) => k ? config.steering * (affinity[index(y + dy, x + dx)] - affinity[i]) : 0), peakScore = Math.max(...scores);
+        const logits = scores.map(score => Math.exp(Math.max(-60, score - peakScore)));
         const total = logits.reduce((a, b) => a + b, 0);
         targets.forEach(([dy, dx], k) => {
           const share = (1 - config.diffusion) * logits[k] / total + config.diffusion / 5, target = index(y + dy, x + dx);

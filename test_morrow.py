@@ -28,6 +28,12 @@ class WorldTests(unittest.TestCase):
         moved = world._transport(world.body, world._neighbor_mean(world.body))
         self.assertTrue(np.isclose(moved.sum(), world.body.sum(), rtol=0.0, atol=1e-10))
 
+    def test_transport_stays_finite_for_extreme_affinity(self) -> None:
+        world = World.seeded(seed=2)
+        world.body[0, 0] = 1e12
+        moved = world._transport(world.body, world._neighbor_mean(world.body), steering=5.0)
+        self.assertTrue(np.isfinite(moved).all())
+
     def test_component_detection_wraps_at_world_edge(self) -> None:
         body = np.zeros((3, 3))
         body[0, 0] = body[0, 2] = body[1, 0] = body[1, 2] = 1.0
