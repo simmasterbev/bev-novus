@@ -27,6 +27,9 @@ class Birth:
     center: tuple[int, int]
     tick: int
     viable: bool = False
+    child_id: int = 0
+    generation: int = 0
+    genotype: tuple[float, float] = (0.0, 0.0)
 
 
 @dataclass
@@ -38,13 +41,25 @@ class PatternCensus:
     ages: dict[int, int] = field(default_factory=dict)
     created: int = 0
     destroyed: int = 0
+    generations: dict[int, int] = field(default_factory=dict)
+    overlap_scores: list[float] = field(default_factory=list)
+    ambiguous: int = 0
+    merges: int = 0
+    splits: int = 0
 
     def update(self, components: list[Component]) -> dict[int, Component]:
         prior_cells = {ident: component.cells for ident, component in self.current.items()}
         used, observed = set(), {}
+        matches: dict[int, list[int]] = {ident: [] for ident in prior_cells}
         for component in components:
-            candidates = [(len(component.cells & cells), ident) for ident, cells in prior_cells.items() if ident not in used]
+            all_overlaps = [(len(component.cells & cells), ident) for ident, cells in prior_cells.items() if len(component.cells & cells)]
+            for _, ident in all_overlaps:
+                matches[ident].append(len(observed))
+            candidates = [(overlap, ident) for overlap, ident in all_overlaps if ident not in used]
             overlap, ident = max(candidates, default=(0, 0))
+            if len(candidates) > 1 and sum(value == overlap for value, _ in candidates) > 1:
+                self.ambiguous += 1
+            self.overlap_scores.append(overlap / max(len(component.cells), 1))
             if overlap:
                 used.add(ident)
                 self.ages[ident] += 1
@@ -53,7 +68,11 @@ class PatternCensus:
                 self.next_id += 1
                 self.ages[ident] = 1
                 self.created += 1
+                self.generations.setdefault(ident, 0)
             observed[ident] = component
+            if len(all_overlaps) > 1:
+                self.merges += 1
+        self.splits += sum(len(ids) > 1 for ids in matches.values())
         self.destroyed += len(set(self.current) - set(observed))
         self.current = observed
         return observed
@@ -62,12 +81,42 @@ class PatternCensus:
     def persistent(self) -> int:
         return sum(age > 1 for age in self.ages.values())
 
+    @property
+    def median_overlap(self) -> float:
+        return float(np.median(self.overlap_scores)) if self.overlap_scores else 0.0
+
+    def register_birth(self, birth: Birth, components: dict[int, Component]) -> None:
+        if not components:
+            return
+        birth.child_id = min(components, key=lambda ident: (components[ident].center[0] - birth.center[0]) ** 2 + (components[ident].center[1] - birth.center[1]) ** 2)
+        birth.generation = self.generations.get(birth.parent_id, 0) + 1
+        self.generations[birth.child_id] = birth.generation
+
 
 def ecology_metrics(world: "World", census: PatternCensus) -> dict[str, float]:
     traits = [component.trait for component in census.current.values()]
     niches = len(np.unique(np.floor(np.asarray(traits) * 4))) if traits else 0
+    low_resource = world.body[world.resource < np.median(world.resource)]
     return {"resource_patchiness": float(world.resource.std()), "waste_patchiness": float(world.waste.std()),
-            "coexisting_patterns": float(len(census.current)), "occupied_trait_niches": float(niches)}
+            "coexisting_patterns": float(len(census.current)), "occupied_trait_niches": float(niches),
+            "competition_pressure": float(low_resource.mean()) if low_resource.size else 0.0,
+            "interference_pressure": float(np.mean(world.waste * world.body))}
+
+
+def individuality_metrics(world: "World", census: PatternCensus) -> dict[str, float]:
+    compactness, boundaries = [], []
+    height, width = world.body.shape
+    for component in census.current.values():
+        perimeter = sum(1 for cell in component.cells for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1))
+                        if ((cell // width + dy) % height) * width + ((cell % width + dx) % width) not in component.cells)
+        area = len(component.cells)
+        compactness.append(4 * np.pi * area / max(perimeter * perimeter, 1))
+        boundaries.append(perimeter / max(area, 1))
+    return {"compactness": float(np.mean(compactness)) if compactness else 0.0,
+            "boundary_ratio": float(np.mean(boundaries)) if boundaries else 0.0,
+            "self_overlap": census.median_overlap,
+            "merges": float(census.merges), "splits": float(census.splits),
+            "ambiguous_identity": float(census.ambiguous)}
 
 
 def evolvability_metrics(world: "World", census: PatternCensus) -> dict[str, float]:
@@ -78,6 +127,15 @@ def evolvability_metrics(world: "World", census: PatternCensus) -> dict[str, flo
     return {"viable_births": float(len(viable)), "trait_diversity": float(np.std(traits)) if traits else 0.0,
             "mean_mutation_rate": float(np.mean(mutations)) if mutations else 0.0,
             "novel_viable_birth_fraction": float(np.mean(np.asarray(novelty) >= 0.01)) if novelty else 0.0}
+
+
+def collective_metrics(world: "World", census: PatternCensus) -> dict[str, float]:
+    multi_core = 0
+    for component in census.current.values():
+        peaks = sum(world.body[cell // world.body.shape[1], cell % world.body.shape[1]] >= world.body.max() * .8 for cell in component.cells)
+        multi_core += peaks >= 2
+    return {"multi_core_groups": float(multi_core), "group_persistence": float(census.persistent if multi_core else 0),
+            "group_births": float(sum(birth.generation > 0 for birth in world.births))}
 
 
 @dataclass
@@ -97,6 +155,9 @@ class World:
     births: list[Birth] = field(default_factory=list)
     ticks: int = 0
     autonomous_reproduction: bool = True
+    waste_inhibition: float = 0.45
+    recycle_rate: float = 0.025
+    seed_interval: int = 60
 
     def __post_init__(self) -> None:
         if self.trait_mass is None:
@@ -107,7 +168,7 @@ class World:
             self.resource_source = np.ones_like(self.body)
 
     @classmethod
-    def seeded(cls, height: int = 72, width: int = 96, seed: int = 1) -> "World":
+    def seeded(cls, height: int = 72, width: int = 96, seed: int = 1, source_scale: float = 1.5) -> "World":
         rng = np.random.default_rng(seed)
         y, x = np.mgrid[:height, :width]
         resource = np.zeros((height, width), dtype=float)
@@ -118,7 +179,7 @@ class World:
         for _ in range(7):
             cy, cx, radius = rng.uniform(0, height), rng.uniform(0, width), rng.uniform(6, 16)
             resource += np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / radius**2)
-            source += np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / (radius * 1.5) ** 2)
+            source += np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / (radius * source_scale) ** 2)
         for _ in range(5):
             cy, cx, radius = rng.uniform(0, height), rng.uniform(0, width), rng.uniform(2, 5)
             patch = 0.55 * np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / radius**2)
@@ -139,7 +200,7 @@ class World:
 
     def step(self) -> None:
         """Local periodic transport and metabolism; matter and trait mass move together."""
-        affinity = self._neighbor_mean(self.body) + 0.35 * self.resource - 0.45 * self.waste
+        affinity = self._neighbor_mean(self.body) + 0.35 * self.resource - self.waste_inhibition * self.waste
         steering = 0.5 + 3.0 * self.trait_field()
         self.body = self._transport(self.body, affinity, steering)
         self.trait_mass = self._transport(self.trait_mass, affinity, steering)
@@ -155,11 +216,11 @@ class World:
         self.body -= decay
         self.trait_mass -= traits * decay
         self.waste += decay
-        recycled = np.minimum(self.waste, 0.025 * self.resource_source * self.waste)
+        recycled = np.minimum(self.waste, self.recycle_rate * self.resource_source * self.waste)
         self.waste -= recycled
         self.resource += recycled
         self.ticks += 1
-        if self.autonomous_reproduction and self.ticks % 60 == 0:
+        if self.autonomous_reproduction and self.ticks % self.seed_interval == 0:
             self.intrinsic_reproduction()
 
     def components(self, threshold: float = 0.25, min_cells: int = 4) -> list[Component]:
@@ -282,7 +343,8 @@ class World:
     def copy(self) -> "World":
         return World(self.body.copy(), self.resource.copy(), self.waste.copy(), self.trait_mass.copy(), self.mutation_mass.copy(),
                      self.resource_source.copy(), self.metabolism_rate, self.body_yield, self.decay_rate, self.diffusion, self.steering,
-                     np.random.default_rng(0), ticks=self.ticks, autonomous_reproduction=self.autonomous_reproduction)
+                     np.random.default_rng(0), ticks=self.ticks, autonomous_reproduction=self.autonomous_reproduction,
+                     waste_inhibition=self.waste_inhibition, recycle_rate=self.recycle_rate, seed_interval=self.seed_interval)
 
     def _neighbor_mean(self, field: np.ndarray) -> np.ndarray:
         return (field + np.roll(field, 1, 0) + np.roll(field, -1, 0) + np.roll(field, 1, 1) + np.roll(field, -1, 1)) / 5.0

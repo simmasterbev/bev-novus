@@ -21,7 +21,11 @@
       "viable": 3,
       "trait_diversity": 0.0,
       "niches": 0.0,
-      "mass_drift": 3.501554601825774e-11
+      "mass_drift": 3.501554601825774e-11,
+      "compactness": 0.0,
+      "boundary_ratio": 0.0,
+      "identity_ambiguity": 0.0,
+      "groups": 0.0
     },
     {
       "label": "audit",
@@ -31,7 +35,11 @@
       "viable": 3,
       "trait_diversity": 0.0,
       "niches": 0.0,
-      "mass_drift": 3.8198777474462986e-11
+      "mass_drift": 3.8198777474462986e-11,
+      "compactness": 0.0,
+      "boundary_ratio": 0.0,
+      "identity_ambiguity": 0.0,
+      "groups": 0.0
     },
     {
       "label": "audit",
@@ -41,7 +49,11 @@
       "viable": 2,
       "trait_diversity": 0.0,
       "niches": 0.0,
-      "mass_drift": 4.9112713895738125e-11
+      "mass_drift": 4.9112713895738125e-11,
+      "compactness": 0.0,
+      "boundary_ratio": 0.0,
+      "identity_ambiguity": 0.0,
+      "groups": 0.0
     },
     {
       "label": "audit",
@@ -51,7 +63,11 @@
       "viable": 0,
       "trait_diversity": 0.0,
       "niches": 0.0,
-      "mass_drift": 6.366462912410498e-11
+      "mass_drift": 6.366462912410498e-11,
+      "compactness": 0.0,
+      "boundary_ratio": 0.0,
+      "identity_ambiguity": 0.0,
+      "groups": 0.0
     },
     {
       "label": "audit",
@@ -61,7 +77,11 @@
       "viable": 5,
       "trait_diversity": 0.0,
       "niches": 0.0,
-      "mass_drift": 2.5920599000528455e-11
+      "mass_drift": 2.5920599000528455e-11,
+      "compactness": 0.0,
+      "boundary_ratio": 0.0,
+      "identity_ambiguity": 0.0,
+      "groups": 0.0
     },
     {
       "label": "audit",
@@ -71,7 +91,11 @@
       "viable": 1,
       "trait_diversity": 0.0,
       "niches": 0.0,
-      "mass_drift": 3.865352482534945e-11
+      "mass_drift": 3.865352482534945e-11,
+      "compactness": 0.0,
+      "boundary_ratio": 0.0,
+      "identity_ambiguity": 0.0,
+      "groups": 0.0
     },
     {
       "label": "audit",
@@ -81,7 +105,11 @@
       "viable": 2,
       "trait_diversity": 0.0,
       "niches": 0.0,
-      "mass_drift": 3.865352482534945e-11
+      "mass_drift": 3.865352482534945e-11,
+      "compactness": 0.0,
+      "boundary_ratio": 0.0,
+      "identity_ambiguity": 0.0,
+      "groups": 0.0
     },
     {
       "label": "audit",
@@ -91,7 +119,11 @@
       "viable": 2,
       "trait_diversity": 0.0,
       "niches": 1.0,
-      "mass_drift": 3.956301952712238e-11
+      "mass_drift": 3.956301952712238e-11,
+      "compactness": 0.4363323129985824,
+      "boundary_ratio": 2.4,
+      "identity_ambiguity": 0.0,
+      "groups": 1.0
     },
     {
       "label": "audit",
@@ -101,7 +133,11 @@
       "viable": 3,
       "trait_diversity": 0.0,
       "niches": 1.0,
-      "mass_drift": 4.274625098332763e-11
+      "mass_drift": 4.274625098332763e-11,
+      "compactness": 0.4363323129985824,
+      "boundary_ratio": 2.4,
+      "identity_ambiguity": 0.0,
+      "groups": 1.0
     },
     {
       "label": "audit",
@@ -111,7 +147,11 @@
       "viable": 0,
       "trait_diversity": 0.0,
       "niches": 0.0,
-      "mass_drift": 3.774403012357652e-11
+      "mass_drift": 3.774403012357652e-11,
+      "compactness": 0.0,
+      "boundary_ratio": 0.0,
+      "identity_ambiguity": 0.0,
+      "groups": 0.0
     }
   ],
   "gates": {
@@ -131,6 +171,24 @@
       "status": "pass",
       "with_reproduction": 3,
       "without": 0
+    },
+    "identity": {
+      "status": "pass",
+      "ambiguous": 0.0
+    },
+    "individuality": {
+      "status": "observe",
+      "median_compactness": 0.0,
+      "median_boundary_ratio": 0.0
+    },
+    "ecology": {
+      "status": "observe",
+      "spatial_runs": 2,
+      "well_mixed_control": 1
+    },
+    "collective": {
+      "status": "not-demonstrated",
+      "multi_core_runs": 2
     },
     "evolvability": {
       "status": "fail",

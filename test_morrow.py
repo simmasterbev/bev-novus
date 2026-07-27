@@ -74,6 +74,15 @@ class WorldTests(unittest.TestCase):
         self.assertGreater(ecology["resource_patchiness"], 0.0)
         self.assertGreaterEqual(evolution["mean_mutation_rate"], 0.0)
 
+    def test_lineage_registration_assigns_child_and_generation(self) -> None:
+        world = World.seeded(seed=8)
+        census = PatternCensus(); census.update(world.components())
+        world.intrinsic_reproduction()
+        census.update(world.components())
+        for birth in world.births:
+            census.register_birth(birth, census.current)
+        self.assertTrue(all(birth.child_id >= 0 and birth.generation >= 1 for birth in world.births))
+
     def test_control_condition_returns_measurable_result(self) -> None:
         result = run_condition("test", 1, steps=30, reproduce=False)
         self.assertEqual(result.label, "test")

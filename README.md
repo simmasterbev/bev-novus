@@ -2,7 +2,7 @@
 
 Bev Novus is a small, inspectable artificial-life world inspired by Lenia, Flow-Lenia, Avida, and artificial chemistry research.
 
-Version 1.0 completes the initial research roadmap:
+Version 2.1 includes the initial roadmap audit and expanded experiment controls:
 
 - body matter moves through a local affinity field;
 - resource is converted to body matter and waste;

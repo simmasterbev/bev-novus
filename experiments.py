@@ -9,7 +9,7 @@ from pathlib import Path
 
 import numpy as np
 
-from morrow import PatternCensus, World, ecology_metrics, evolvability_metrics
+from morrow import PatternCensus, World, collective_metrics, ecology_metrics, evolvability_metrics, individuality_metrics
 
 
 @dataclass
@@ -22,6 +22,10 @@ class Result:
     trait_diversity: float
     niches: float
     mass_drift: float
+    compactness: float
+    boundary_ratio: float
+    identity_ambiguity: float
+    groups: float
 
 
 def audit(steps: int = 1000, seeds: tuple[int, ...] = tuple(range(1, 11))) -> dict:
@@ -34,6 +38,10 @@ def audit(steps: int = 1000, seeds: tuple[int, ...] = tuple(range(1, 11))) -> di
         "replication": {"status": "pass" if len(results) >= 10 else "fail", "runs": len(results)},
         "persistence": {"status": "fail" if np.median([result.live for result in results]) == 0 else "observe", "median_live": float(np.median([result.live for result in results]))},
         "reproduction_effect": {"status": "pass" if baseline.births > no_reproduction.births else "observe", "with_reproduction": baseline.births, "without": no_reproduction.births},
+        "identity": {"status": "pass" if max(result.identity_ambiguity for result in results) / max(sum(result.births for result in results), 1) < .05 else "fail", "ambiguous": max(result.identity_ambiguity for result in results)},
+        "individuality": {"status": "observe", "median_compactness": float(np.median([result.compactness for result in results])), "median_boundary_ratio": float(np.median([result.boundary_ratio for result in results]))},
+        "ecology": {"status": "observe", "spatial_runs": sum(result.niches > 0 for result in results), "well_mixed_control": no_reproduction.live},
+        "collective": {"status": "not-demonstrated", "multi_core_runs": sum(result.groups > 0 for result in results)},
         "evolvability": {"status": "pass" if max(result.trait_diversity for result in results) > 0 else "fail", "max_trait_diversity": max(result.trait_diversity for result in results)},
         "open_endedness": {"status": "not-demonstrated", "reason": "requires sustained multi-metric novelty beyond this audit horizon"},
     }}
@@ -41,9 +49,11 @@ def audit(steps: int = 1000, seeds: tuple[int, ...] = tuple(range(1, 11))) -> di
 
 def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = True,
                   recycle: bool = True, spatial: bool = True, reproduce: bool = True,
-                  metabolism: float = 0.07, diffusion: float = 0.18) -> Result:
-    world, census = World.seeded(seed=seed), PatternCensus()
+                  metabolism: float = 0.07, diffusion: float = 0.18, waste_inhibition: float = 0.45,
+                  recycle_rate: float = 0.025, seed_interval: int = 60, source_scale: float = 1.5) -> Result:
+    world, census = World.seeded(seed=seed, source_scale=source_scale), PatternCensus()
     world.metabolism_rate, world.diffusion, world.autonomous_reproduction = metabolism, diffusion, reproduce
+    world.waste_inhibition, world.recycle_rate, world.seed_interval = waste_inhibition, recycle_rate, seed_interval
     if not mutate:
         world.mutation_mass[:] = world.body * 0.005
     if not recycle:
@@ -59,18 +69,23 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
         for birth in world.births[start:]:
             if prior:
                 birth.parent_id = min(prior, key=lambda ident: abs(prior[ident].trait - birth.parent_trait))
+            census.register_birth(birth, census.current)
         world.assess_births(tick)
     eco, evo = ecology_metrics(world, census), evolvability_metrics(world, census)
+    individual, collective = individuality_metrics(world, census), collective_metrics(world, census)
     return Result(label, seed, len(census.current), len(world.births), int(evo["viable_births"]),
-                  evo["trait_diversity"], eco["occupied_trait_niches"], abs(world.total_mass - baseline))
+                  evo["trait_diversity"], eco["occupied_trait_niches"], abs(world.total_mass - baseline),
+                  individual["compactness"], individual["boundary_ratio"], individual["ambiguous_identity"], collective["multi_core_groups"])
 
 
 def sweep(steps: int = 480, seeds: tuple[int, ...] = (1, 2, 3)) -> list[Result]:
     results = []
     for metabolism in (0.05, 0.07, 0.09):
         for diffusion in (0.10, 0.18, 0.26):
-            label = f"metabolism={metabolism:.2f}, diffusion={diffusion:.2f}"
-            results.extend(run_condition(label, seed, steps, metabolism=metabolism, diffusion=diffusion) for seed in seeds)
+            for source_scale, seed_interval in ((1.0, 40), (1.5, 60), (2.0, 90)):
+                label = f"metabolism={metabolism:.2f}, diffusion={diffusion:.2f}, patch={source_scale:.1f}, interval={seed_interval}"
+                results.extend(run_condition(label, seed, steps, metabolism=metabolism, diffusion=diffusion,
+                                             source_scale=source_scale, seed_interval=seed_interval) for seed in seeds)
     return results
 
 
