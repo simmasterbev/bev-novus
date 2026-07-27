@@ -1,12 +1,12 @@
-# Our Artificial Life World - Design 0.1
+# Bev Novus - Design 1.0
 
 ## Working name
 
-**Morrow** - a continuous spatial world in which organized matter can maintain itself, move, divide, mutate, and alter the conditions available to future organisms.
+**Bev Novus** - a continuous spatial world in which organized matter can maintain itself, move, divide, mutate, and alter the conditions available to future organisms.
 
 ## Design goal
 
-Morrow is not intended to imitate Earth biology directly. Its first goal is narrower and testable:
+Bev Novus is not intended to imitate Earth biology directly. Its first goal is narrower and testable:
 
 > Can a continuous local world produce bounded, persistent entities whose inherited differences affect survival and reproduction through resource-coupled spatial interactions?
 

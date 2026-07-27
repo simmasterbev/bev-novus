@@ -2,7 +2,7 @@ import unittest
 
 import numpy as np
 
-from morrow import PatternCensus, World
+from morrow import PatternCensus, World, ecology_metrics, evolvability_metrics
 
 
 class WorldTests(unittest.TestCase):
@@ -53,6 +53,25 @@ class WorldTests(unittest.TestCase):
         self.assertEqual(len(births), 1)
         self.assertTrue(np.isclose(world.body.sum(), before, atol=1e-10))
         self.assertAlmostEqual(births[0].trait, 0.7)
+
+    def test_intrinsic_seed_emission_inherits_a_mutable_description(self) -> None:
+        body = np.zeros((24, 24)); body[10:13, 10:13] = 2.0
+        world = World(body, np.ones_like(body), np.zeros_like(body), body * 0.7, body * 0.06, np.ones_like(body), rng=np.random.default_rng(5))
+        before = world.total_mass
+        births = world.intrinsic_reproduction()
+        self.assertEqual(len(births), 1)
+        self.assertTrue(np.isclose(world.total_mass, before, atol=1e-10))
+        self.assertGreaterEqual(births[0].mutation_rate, 0.005)
+
+    def test_ecology_and_evolvability_metrics_are_observable(self) -> None:
+        world = World.seeded(seed=9)
+        census = PatternCensus(); census.update(world.components())
+        world.intrinsic_reproduction()
+        for birth in world.births:
+            birth.viable = True
+        ecology, evolution = ecology_metrics(world, census), evolvability_metrics(world, census)
+        self.assertGreater(ecology["resource_patchiness"], 0.0)
+        self.assertGreaterEqual(evolution["mean_mutation_rate"], 0.0)
 
 
 if __name__ == "__main__":

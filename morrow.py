@@ -1,4 +1,4 @@
-"""Morrow 0.4: conservative fields, pattern census, and a reproduction scaffold."""
+"""Bev Novus v1: conservative fields, ecology, and heritable seed emission."""
 
 from __future__ import annotations
 
@@ -21,7 +21,9 @@ class Component:
 @dataclass
 class Birth:
     parent_id: int
+    parent_trait: float
     trait: float
+    mutation_rate: float
     center: tuple[int, int]
     tick: int
     viable: bool = False
@@ -61,12 +63,31 @@ class PatternCensus:
         return sum(age > 1 for age in self.ages.values())
 
 
+def ecology_metrics(world: "World", census: PatternCensus) -> dict[str, float]:
+    traits = [component.trait for component in census.current.values()]
+    niches = len(np.unique(np.floor(np.asarray(traits) * 4))) if traits else 0
+    return {"resource_patchiness": float(world.resource.std()), "waste_patchiness": float(world.waste.std()),
+            "coexisting_patterns": float(len(census.current)), "occupied_trait_niches": float(niches)}
+
+
+def evolvability_metrics(world: "World", census: PatternCensus) -> dict[str, float]:
+    viable = [birth for birth in world.births if birth.viable]
+    novelty = [abs(birth.trait - birth.parent_trait) for birth in viable]
+    mutations = [birth.mutation_rate for birth in viable]
+    traits = [component.trait for component in census.current.values()]
+    return {"viable_births": float(len(viable)), "trait_diversity": float(np.std(traits)) if traits else 0.0,
+            "mean_mutation_rate": float(np.mean(mutations)) if mutations else 0.0,
+            "novel_viable_birth_fraction": float(np.mean(np.asarray(novelty) >= 0.01)) if novelty else 0.0}
+
+
 @dataclass
 class World:
     body: np.ndarray
     resource: np.ndarray
     waste: np.ndarray
     trait_mass: np.ndarray | None = None
+    mutation_mass: np.ndarray | None = None
+    resource_source: np.ndarray | None = None
     metabolism_rate: float = 0.07
     body_yield: float = 0.72
     decay_rate: float = 0.012
@@ -74,10 +95,16 @@ class World:
     steering: float = 2.0
     rng: np.random.Generator = field(default_factory=np.random.default_rng, repr=False)
     births: list[Birth] = field(default_factory=list)
+    ticks: int = 0
+    autonomous_reproduction: bool = True
 
     def __post_init__(self) -> None:
         if self.trait_mass is None:
             self.trait_mass = self.body * 0.5
+        if self.mutation_mass is None:
+            self.mutation_mass = self.body * 0.04
+        if self.resource_source is None:
+            self.resource_source = np.ones_like(self.body)
 
     @classmethod
     def seeded(cls, height: int = 72, width: int = 96, seed: int = 1) -> "World":
@@ -86,15 +113,19 @@ class World:
         resource = np.zeros((height, width), dtype=float)
         body = np.zeros_like(resource)
         traits = np.zeros_like(resource)
+        mutability = np.zeros_like(resource)
+        source = np.zeros_like(resource)
         for _ in range(7):
             cy, cx, radius = rng.uniform(0, height), rng.uniform(0, width), rng.uniform(6, 16)
             resource += np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / radius**2)
+            source += np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / (radius * 1.5) ** 2)
         for _ in range(5):
             cy, cx, radius = rng.uniform(0, height), rng.uniform(0, width), rng.uniform(2, 5)
             patch = 0.55 * np.exp(-((y - cy) ** 2 + (x - cx) ** 2) / radius**2)
             body += patch
             traits += patch * rng.uniform(0.35, 0.65)
-        return cls(body, resource, np.zeros_like(resource), traits, rng=rng)
+            mutability += patch * rng.uniform(0.02, 0.08)
+        return cls(body, resource, np.zeros_like(resource), traits, mutability, source / source.max(), rng=rng)
 
     @property
     def total_mass(self) -> float:
@@ -103,11 +134,16 @@ class World:
     def trait_field(self) -> np.ndarray:
         return np.divide(self.trait_mass, self.body, out=np.full_like(self.body, 0.5), where=self.body > 1e-12)
 
+    def mutation_field(self) -> np.ndarray:
+        return np.divide(self.mutation_mass, self.body, out=np.full_like(self.body, 0.04), where=self.body > 1e-12)
+
     def step(self) -> None:
         """Local periodic transport and metabolism; matter and trait mass move together."""
         affinity = self._neighbor_mean(self.body) + 0.35 * self.resource - 0.45 * self.waste
-        self.body = self._transport(self.body, affinity)
-        self.trait_mass = self._transport(self.trait_mass, affinity)
+        steering = 0.5 + 3.0 * self.trait_field()
+        self.body = self._transport(self.body, affinity, steering)
+        self.trait_mass = self._transport(self.trait_mass, affinity, steering)
+        self.mutation_mass = self._transport(self.mutation_mass, affinity, steering)
         traits = self.trait_field()
         intake = np.minimum(self.resource, self.metabolism_rate * (0.5 + traits) * self.body * self.resource)
         self.resource -= intake
@@ -119,6 +155,12 @@ class World:
         self.body -= decay
         self.trait_mass -= traits * decay
         self.waste += decay
+        recycled = np.minimum(self.waste, 0.025 * self.resource_source * self.waste)
+        self.waste -= recycled
+        self.resource += recycled
+        self.ticks += 1
+        if self.autonomous_reproduction and self.ticks % 60 == 0:
+            self.intrinsic_reproduction()
 
     def components(self, threshold: float = 0.25, min_cells: int = 4) -> list[Component]:
         """Describe thresholded body components, preserving periodic edge connectivity."""
@@ -163,6 +205,16 @@ class World:
         if not candidates:
             return []
         parent_id, parent = max(candidates, key=lambda item: item[1].mass)
+        return self._seed_from_component(parent_id, parent, tick, mutation)
+
+    def intrinsic_reproduction(self, division_mass: float = 8.0, min_resource: float = 0.12) -> list[Birth]:
+        """Model-internal division rule: local body mass and resource permit seed emission."""
+        candidates = [component for component in self.components() if component.mass >= division_mass and component.resource >= min_resource]
+        if not candidates:
+            return []
+        return self._seed_from_component(0, max(candidates, key=lambda component: component.mass), self.ticks, None)
+
+    def _seed_from_component(self, parent_id: int, parent: Component, tick: int, mutation: float | None) -> list[Birth]:
         height, width = self.body.shape
         direction = ((0, 12), (12, 0), (0, -12), (-12, 0))[len(self.births) % 4]
         target = (round(parent.center[0] + direction[0]) % height, round(parent.center[1] + direction[1]) % width)
@@ -173,9 +225,13 @@ class World:
         if donated <= 0.0:
             return []
         parent_trait = float(self.trait_mass[donor_y, donor_x].sum() / self.body[donor_y, donor_x].sum())
+        parent_mutation = float(self.mutation_mass[donor_y, donor_x].sum() / self.body[donor_y, donor_x].sum())
         self.body[donor_y, donor_x] -= donation
         self.trait_mass[donor_y, donor_x] -= donation * parent_trait
+        self.mutation_mass[donor_y, donor_x] -= donation * parent_mutation
+        mutation = parent_mutation if mutation is None else mutation
         child_trait = float(np.clip(parent_trait + self.rng.normal(0.0, mutation), 0.0, 1.0))
+        child_mutation = float(np.clip(parent_mutation + self.rng.normal(0.0, 0.01), 0.005, 0.2))
         kernel = np.array(((1.0, 2.0, 1.0), (2.0, 4.0, 2.0), (1.0, 2.0, 1.0))) / 16.0
         for dy in range(-1, 2):
             for dx in range(-1, 2):
@@ -183,7 +239,8 @@ class World:
                 amount = donated * kernel[dy + 1, dx + 1]
                 self.body[y, x] += amount
                 self.trait_mass[y, x] += amount * child_trait
-        birth = Birth(parent_id, child_trait, target, tick)
+                self.mutation_mass[y, x] += amount * child_mutation
+        birth = Birth(parent_id, parent_trait, child_trait, child_mutation, target, tick)
         self.births.append(birth)
         return [birth]
 
@@ -223,15 +280,17 @@ class World:
         return float(damaged.body.sum() / max(control.body.sum(), 1e-12))
 
     def copy(self) -> "World":
-        return World(self.body.copy(), self.resource.copy(), self.waste.copy(), self.trait_mass.copy(), self.metabolism_rate,
-                     self.body_yield, self.decay_rate, self.diffusion, self.steering, np.random.default_rng(0))
+        return World(self.body.copy(), self.resource.copy(), self.waste.copy(), self.trait_mass.copy(), self.mutation_mass.copy(),
+                     self.resource_source.copy(), self.metabolism_rate, self.body_yield, self.decay_rate, self.diffusion, self.steering,
+                     np.random.default_rng(0), ticks=self.ticks, autonomous_reproduction=self.autonomous_reproduction)
 
     def _neighbor_mean(self, field: np.ndarray) -> np.ndarray:
         return (field + np.roll(field, 1, 0) + np.roll(field, -1, 0) + np.roll(field, 1, 1) + np.roll(field, -1, 1)) / 5.0
 
-    def _transport(self, mass: np.ndarray, affinity: np.ndarray) -> np.ndarray:
+    def _transport(self, mass: np.ndarray, affinity: np.ndarray, steering: np.ndarray | float | None = None) -> np.ndarray:
         directions = ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))
-        logits = [np.ones_like(affinity)] + [np.exp(self.steering * (np.roll(affinity, (-dy, -dx), axis=(0, 1)) - affinity)) for dy, dx in directions[1:]]
+        steering = self.steering if steering is None else steering
+        logits = [np.ones_like(affinity)] + [np.exp(steering * (np.roll(affinity, (-dy, -dx), axis=(0, 1)) - affinity)) for dy, dx in directions[1:]]
         weights = np.stack(logits)
         weights = (1.0 - self.diffusion) * weights / weights.sum(axis=0, keepdims=True) + self.diffusion / 5.0
         return sum(np.roll(mass * weight, direction, axis=(0, 1)) for weight, direction in zip(weights, directions))
@@ -246,7 +305,7 @@ class World:
             stream.write(pixels.tobytes())
 
 
-def run(steps: int, every: int, output: Path, seed: int, reproduce: bool = False, probe: bool = False) -> World:
+def run(steps: int, every: int, output: Path, seed: int, probe: bool = False) -> World:
     world, census = World.seeded(seed=seed), PatternCensus()
     census.update(world.components())
     baseline = world.total_mass
@@ -254,32 +313,36 @@ def run(steps: int, every: int, output: Path, seed: int, reproduce: bool = False
         if tick % every == 0:
             world.write_ppm(output / f"frame-{tick:05d}.ppm")
         if tick < steps:
+            prior = dict(census.current)
+            prior_births = len(world.births)
             world.step()
             census.update(world.components())
-            if reproduce and tick % 60 == 0:
-                world.reproduce_scaffold(census, tick)
+            for birth in world.births[prior_births:]:
+                if prior:
+                    birth.parent_id = min(prior, key=lambda ident: abs(prior[ident].trait - birth.parent_trait))
             world.assess_births(tick)
     active, starved = world.maintenance_probe() if probe else (float("nan"), float("nan"))
     repair = world.perturbation_probe() if probe else float("nan")
     viable = sum(birth.viable for birth in world.births)
+    ecology, evolution = ecology_metrics(world, census), evolvability_metrics(world, census)
     print(f"steps={steps} mass={world.total_mass:.9f} drift={abs(world.total_mass-baseline):.3e} "
           f"live={len(census.current)} created={census.created} destroyed={census.destroyed} "
-          f"births={len(world.births)} viable={viable} maintenance={active:.3f}/{starved:.3f} repair={repair:.3f}")
+          f"births={len(world.births)} viable={viable} maintenance={active:.3f}/{starved:.3f} repair={repair:.3f} "
+          f"niches={ecology['occupied_trait_niches']:.0f} novelty={evolution['novel_viable_birth_fraction']:.2f}")
     return world
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Run Morrow milestones 1-4.")
+    parser = argparse.ArgumentParser(description="Run Bev Novus v1.")
     parser.add_argument("--steps", type=int, default=500)
     parser.add_argument("--every", type=int, default=100)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--out", type=Path, default=Path("output"))
-    parser.add_argument("--reproduce", action="store_true", help="enable the explicitly external reproduction scaffold")
     parser.add_argument("--probe", action="store_true", help="run the maintenance-versus-starvation comparison")
     args = parser.parse_args()
     if args.steps < 0 or args.every < 1:
         parser.error("--steps must be non-negative and --every must be at least 1")
-    run(args.steps, args.every, args.out, args.seed, args.reproduce, args.probe)
+    run(args.steps, args.every, args.out, args.seed, args.probe)
 
 
 if __name__ == "__main__":
