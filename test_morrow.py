@@ -17,3 +17,13 @@ class WorldTests(unittest.TestCase):
         world = World.seeded(seed=2)
         moved = world._transport(world.body, world._neighbor_mean(world.body))
         self.assertTrue(np.isclose(moved.sum(), world.body.sum(), rtol=0.0, atol=1e-10))
+
+    def test_structure_detection_wraps_at_world_edge(self) -> None:
+        body = np.zeros((3, 3))
+        body[0, 0] = body[0, 2] = body[1, 0] = body[1, 2] = 1.0
+        world = World(body=body, resource=np.zeros_like(body), waste=np.zeros_like(body))
+        self.assertEqual(world.localized_structures(threshold=0.5, min_cells=4), [4])
+
+    def test_empty_world_has_no_structures(self) -> None:
+        world = World(body=np.zeros((3, 3)), resource=np.zeros((3, 3)), waste=np.zeros((3, 3)))
+        self.assertEqual(world.localized_structures(), [])

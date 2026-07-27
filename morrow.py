@@ -54,6 +54,34 @@ class World:
         self.body -= decay
         self.waste += decay
 
+    def localized_structures(self, threshold: float = 0.25, min_cells: int = 4) -> list[int]:
+        """Return sizes of above-threshold body components on the periodic grid."""
+        if not 0.0 < threshold <= 1.0 or min_cells < 1:
+            raise ValueError("threshold must be in (0, 1] and min_cells must be positive")
+        peak = self.body.max()
+        if peak <= 0.0:
+            return []
+        mask = self.body >= threshold * peak
+        seen = np.zeros_like(mask, dtype=bool)
+        height, width = mask.shape
+        sizes = []
+        for start_y, start_x in zip(*np.nonzero(mask & ~seen)):
+            if seen[start_y, start_x]:
+                continue
+            stack, size = [(start_y, start_x)], 0
+            seen[start_y, start_x] = True
+            while stack:
+                y, x = stack.pop()
+                size += 1
+                for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                    ny, nx = (y + dy) % height, (x + dx) % width
+                    if mask[ny, nx] and not seen[ny, nx]:
+                        seen[ny, nx] = True
+                        stack.append((ny, nx))
+            if size >= min_cells:
+                sizes.append(size)
+        return sorted(sizes, reverse=True)
+
     def _neighbor_mean(self, field: np.ndarray) -> np.ndarray:
         return (
             field
@@ -102,7 +130,7 @@ def run(steps: int, every: int, output: Path, seed: int) -> World:
         if tick < steps:
             world.step()
     drift = abs(world.total_mass - baseline)
-    print(f"steps={steps} mass={world.total_mass:.9f} drift={drift:.3e}")
+    print(f"steps={steps} mass={world.total_mass:.9f} drift={drift:.3e} structures={len(world.localized_structures())}")
     return world
 
 

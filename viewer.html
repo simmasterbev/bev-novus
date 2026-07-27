@@ -38,6 +38,21 @@
 
     function index(y, x) { return ((y + height) % height) * width + ((x + width) % width); }
     function mass() { return body.reduce((sum, v, i) => sum + v + resource[i] + waste[i], 0); }
+    function structures() {
+      const peak = Math.max(...body); if (peak <= 0) return 0;
+      const cutoff = peak * .25, seen = new Uint8Array(cells); let count = 0;
+      for (let i = 0; i < cells; i++) if (body[i] >= cutoff && !seen[i]) {
+        const stack = [i]; let size = 0; seen[i] = 1;
+        while (stack.length) {
+          const cell = stack.pop(), y = Math.floor(cell / width), x = cell % width; size++;
+          [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dy, dx]) => {
+            const next = index(y + dy, x + dx); if (body[next] >= cutoff && !seen[next]) { seen[next] = 1; stack.push(next); }
+          });
+        }
+        if (size >= 4) count++;
+      }
+      return count;
+    }
     function gaussian(field, count, radiusMin, radiusMax, strength) {
       for (let n = 0; n < count; n++) {
         const cy = Math.random() * height, cx = Math.random() * width;
@@ -83,7 +98,7 @@
         image.data[4 * i + 3] = 255;
       }
       context.putImageData(image, 0, 0);
-      stats.value = `step ${tick} · mass drift ${(mass() - initialMass).toExponential(2)}`;
+      stats.value = `step ${tick} · structures ${structures()} · mass drift ${(mass() - initialMass).toExponential(2)}`;
     }
     function animate() { if (running) for (let i = 0; i < +speed.value; i++) step(); draw(); requestAnimationFrame(animate); }
     pause.onclick = () => { running = !running; pause.textContent = running ? 'Pause' : 'Start'; };
