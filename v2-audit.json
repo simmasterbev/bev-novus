@@ -1,0 +1,144 @@
+{
+  "steps": 1000,
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "results": [
+    {
+      "label": "audit",
+      "seed": 1,
+      "live": 0,
+      "births": 3,
+      "viable": 3,
+      "trait_diversity": 0.0,
+      "niches": 0.0,
+      "mass_drift": 3.501554601825774e-11
+    },
+    {
+      "label": "audit",
+      "seed": 2,
+      "live": 0,
+      "births": 3,
+      "viable": 3,
+      "trait_diversity": 0.0,
+      "niches": 0.0,
+      "mass_drift": 3.8198777474462986e-11
+    },
+    {
+      "label": "audit",
+      "seed": 3,
+      "live": 0,
+      "births": 2,
+      "viable": 2,
+      "trait_diversity": 0.0,
+      "niches": 0.0,
+      "mass_drift": 4.9112713895738125e-11
+    },
+    {
+      "label": "audit",
+      "seed": 4,
+      "live": 0,
+      "births": 0,
+      "viable": 0,
+      "trait_diversity": 0.0,
+      "niches": 0.0,
+      "mass_drift": 6.366462912410498e-11
+    },
+    {
+      "label": "audit",
+      "seed": 5,
+      "live": 0,
+      "births": 5,
+      "viable": 5,
+      "trait_diversity": 0.0,
+      "niches": 0.0,
+      "mass_drift": 2.5920599000528455e-11
+    },
+    {
+      "label": "audit",
+      "seed": 6,
+      "live": 0,
+      "births": 1,
+      "viable": 1,
+      "trait_diversity": 0.0,
+      "niches": 0.0,
+      "mass_drift": 3.865352482534945e-11
+    },
+    {
+      "label": "audit",
+      "seed": 7,
+      "live": 0,
+      "births": 2,
+      "viable": 2,
+      "trait_diversity": 0.0,
+      "niches": 0.0,
+      "mass_drift": 3.865352482534945e-11
+    },
+    {
+      "label": "audit",
+      "seed": 8,
+      "live": 1,
+      "births": 2,
+      "viable": 2,
+      "trait_diversity": 0.0,
+      "niches": 1.0,
+      "mass_drift": 3.956301952712238e-11
+    },
+    {
+      "label": "audit",
+      "seed": 9,
+      "live": 1,
+      "births": 3,
+      "viable": 3,
+      "trait_diversity": 0.0,
+      "niches": 1.0,
+      "mass_drift": 4.274625098332763e-11
+    },
+    {
+      "label": "audit",
+      "seed": 10,
+      "live": 0,
+      "births": 0,
+      "viable": 0,
+      "trait_diversity": 0.0,
+      "niches": 0.0,
+      "mass_drift": 3.774403012357652e-11
+    }
+  ],
+  "gates": {
+    "accounting": {
+      "status": "pass",
+      "max_drift": 6.366462912410498e-11
+    },
+    "replication": {
+      "status": "pass",
+      "runs": 10
+    },
+    "persistence": {
+      "status": "fail",
+      "median_live": 0.0
+    },
+    "reproduction_effect": {
+      "status": "pass",
+      "with_reproduction": 3,
+      "without": 0
+    },
+    "evolvability": {
+      "status": "fail",
+      "max_trait_diversity": 0.0
+    },
+    "open_endedness": {
+      "status": "not-demonstrated",
+      "reason": "requires sustained multi-metric novelty beyond this audit horizon"
+    }
+  }
+}

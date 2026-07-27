@@ -48,6 +48,12 @@ This writes a reproducible sweep plus no-mutation, no-recycling, well-mixed, and
 
 Open `dashboard.html` and select that report to compare viable births, persistent patterns, and trait diversity.
 
-## What v1 does not claim
+Open `audit.html` to inspect the replicated 2.0 release gates and their retained failures.
+
+## Roadmap and 2.0 audit
+
+See `ROADMAP.md` for the full release sequence and test gates. Version 2.0 publishes the audit state of those gates, including failures and null results.
+
+## What 2.0 does not claim
 
 Long-run open-endedness, robust multicellular individuality, and intrinsic ecological innovation remain empirical questions for longer experiments—not features asserted by this release.

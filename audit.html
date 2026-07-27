@@ -1,0 +1,11 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bev Novus 2.0 audit</title>
+<style>body{max-width:900px;margin:2rem auto;padding:0 1rem;font:16px system-ui;background:#101319;color:#e8edf5}table{width:100%;border-collapse:collapse}td,th{padding:.7rem;text-align:left;border-bottom:1px solid #3a4353}.pass{color:#77c66e}.fail{color:#ff8a7a}.observe{color:#e5b75b}.not-demonstrated{color:#b9a7ff}</style>
+<h1>Bev Novus 2.0 audit</h1>
+<p>Evidence status for the roadmap gates. A failed gate is retained as a result, not hidden.</p>
+<table><thead><tr><th>Gate</th><th>Status</th><th>Evidence</th></tr></thead><tbody id="gates"></tbody></table>
+<script>
+fetch('v2-audit.json').then(response=>response.json()).then(report=>{document.getElementById('gates').innerHTML=Object.entries(report.gates).map(([name,gate])=>{const evidence=Object.entries(gate).filter(([key])=>key!=='status').map(([key,value])=>`${key}: ${value}`).join(' · ');return `<tr><td>${name}</td><td class="${gate.status}">${gate.status}</td><td>${evidence}</td></tr>`}).join('')});
+</script>
