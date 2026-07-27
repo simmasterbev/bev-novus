@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Bev Novus live world</title>
+  <title>Bev Novus 2.0 live world</title>
   <style>
     :root { color-scheme: dark; font-family: system-ui, sans-serif; }
     body { max-width: 960px; margin: 2rem auto; padding: 0 1rem; background: #101319; color: #e8edf5; }
@@ -15,16 +15,20 @@
   </style>
 </head>
 <body>
-  <h1>Bev Novus v1 live world</h1>
+  <h1>Bev Novus 2.0 live world</h1>
   <div class="controls">
     <button id="pause" type="button">Pause</button>
     <button id="step" type="button">Step</button>
     <button id="reset" type="button">New world</button>
-    <label><input id="reproduce" type="checkbox" checked> Autonomous seed emission</label>
+    <label><input id="reproduce" type="checkbox" checked> Seed emission</label>
+    <label><input id="recycle" type="checkbox" checked> Recycling</label>
+    <label><input id="spatial" type="checkbox" checked> Spatial resources</label>
+    <label><input id="mutate" type="checkbox" checked> Mutation</label>
     <label>Steps / frame <input id="speed" type="range" min="1" max="30" value="6"><output id="speed-value">6</output></label>
     <output id="stats" aria-live="polite"></output>
   </div>
-  <canvas id="world" width="96" height="72" aria-label="Morrow world: body matter is green, resource is blue, waste is red."></canvas>
+  <canvas id="world" width="96" height="72" aria-label="Bev Novus world: body matter is green, resource is blue, waste is red."></canvas>
+  <canvas id="history" width="96" height="24" aria-label="History of body mass, structures, and births."></canvas>
 
   <script>
     const height = 72, width = 96, cells = height * width;
@@ -35,8 +39,9 @@
     const speed = document.getElementById('speed');
     const speedValue = document.getElementById('speed-value');
     const stats = document.getElementById('stats');
-    const reproduce = document.getElementById('reproduce');
-    let running = true, tick = 0, body, resource, waste, traitMass, initialMass, birthLog;
+    const reproduce = document.getElementById('reproduce'), recycle = document.getElementById('recycle'), spatial = document.getElementById('spatial'), mutate = document.getElementById('mutate');
+    const history = document.getElementById('history'), historyContext = history.getContext('2d');
+    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, birthLog, historyLog;
 
     function index(y, x) { return ((y + height) % height) * width + ((x + width) % width); }
     function mass() { return body.reduce((sum, v, i) => sum + v + resource[i] + waste[i], 0); }
@@ -67,13 +72,14 @@
       }
     }
     function reset() {
-      body = new Float64Array(cells); resource = new Float64Array(cells); waste = new Float64Array(cells); traitMass = new Float64Array(cells); birthLog = [];
-      gaussian(resource, 7, 6, 16, 1); gaussian(body, 5, 2, 5, .55);
-      for (let i = 0; i < cells; i++) traitMass[i] = body[i] * (.35 + .3 * Math.random());
+      body = new Float64Array(cells); resource = new Float64Array(cells); waste = new Float64Array(cells); traitMass = new Float64Array(cells); mutationMass = new Float64Array(cells); source = new Float64Array(cells); birthLog = []; historyLog = [];
+      gaussian(resource, 7, 6, 16, 1); gaussian(source, 7, 6, 16, 1); gaussian(body, 5, 2, 5, .55);
+      if (!spatial.checked) resource.fill(resource.reduce((a, b) => a + b, 0) / cells);
+      for (let i = 0; i < cells; i++) { traitMass[i] = body[i] * (.35 + .3 * Math.random()); mutationMass[i] = body[i] * (.02 + .06 * Math.random()); }
       tick = 0; initialMass = mass(); draw();
     }
     function step() {
-      const affinity = new Float64Array(cells), moved = new Float64Array(cells), movedTraits = new Float64Array(cells);
+      const affinity = new Float64Array(cells), moved = new Float64Array(cells), movedTraits = new Float64Array(cells), movedMutation = new Float64Array(cells);
       for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
         const i = index(y, x);
         affinity[i] = (body[i] + body[index(y - 1, x)] + body[index(y + 1, x)] + body[index(y, x - 1)] + body[index(y, x + 1)]) / 5 + .35 * resource[i] - .45 * waste[i];
@@ -84,15 +90,16 @@
         const total = logits.reduce((a, b) => a + b, 0);
         targets.forEach(([dy, dx], k) => {
           const share = .82 * logits[k] / total + .18 / 5, target = index(y + dy, x + dx);
-          moved[target] += body[i] * share; movedTraits[target] += traitMass[i] * share;
+          moved[target] += body[i] * share; movedTraits[target] += traitMass[i] * share; movedMutation[target] += mutationMass[i] * share;
         });
       }
-      body = moved; traitMass = movedTraits;
+      body = moved; traitMass = movedTraits; mutationMass = movedMutation;
       for (let i = 0; i < cells; i++) {
-        const trait = body[i] > 1e-12 ? traitMass[i] / body[i] : .5;
+        const trait = body[i] > 1e-12 ? traitMass[i] / body[i] : .5, mutationRate = body[i] > 1e-12 ? mutationMass[i] / body[i] : .04;
         const intake = Math.min(resource[i], .07 * (.5 + trait) * body[i] * resource[i]), growth = .72 * intake;
-        resource[i] -= intake; body[i] += growth; traitMass[i] += trait * growth; waste[i] += .28 * intake;
-        const decay = .012 * body[i]; body[i] -= decay; traitMass[i] -= trait * decay; waste[i] += decay;
+        resource[i] -= intake; body[i] += growth; traitMass[i] += trait * growth; mutationMass[i] += mutationRate * growth; waste[i] += .28 * intake;
+        const decay = .012 * body[i]; body[i] -= decay; traitMass[i] -= trait * decay; mutationMass[i] -= mutationRate * decay; waste[i] += decay;
+        if (recycle.checked) { const recovered = Math.min(waste[i], .025 * source[i] * waste[i]); waste[i] -= recovered; resource[i] += recovered; }
       }
       tick++;
       if (reproduce.checked && tick % 120 === 0) bud();
@@ -103,14 +110,14 @@
     }
     function bud() {
       const source = body.reduce((best, value, i) => value > body[best] ? i : best, 0), y = Math.floor(source / width), x = source % width;
-      let donated = 0, traits = 0;
+      let donated = 0, traits = 0, mutations = 0;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        const i = index(y + dy, x + dx), amount = body[i] * .22; body[i] -= amount; traitMass[i] -= amount * (body[i] > 1e-12 ? traitMass[i] / (body[i] + amount) : .5); donated += amount; traits += amount * (body[i] > 1e-12 ? traitMass[i] / body[i] : .5);
+        const i = index(y + dy, x + dx), amount = body[i] * .22, trait = body[i] > 1e-12 ? traitMass[i] / (body[i] + amount) : .5, mutationRate = body[i] > 1e-12 ? mutationMass[i] / (body[i] + amount) : .04; body[i] -= amount; traitMass[i] -= amount * trait; mutationMass[i] -= amount * mutationRate; donated += amount; traits += amount * trait; mutations += amount * mutationRate;
       }
       if (donated <= 0) return;
-      const childTrait = Math.max(0, Math.min(1, traits / donated + (Math.random() - .5) * .08)), targetY = (y + 12) % height, targetX = (x + 12) % width;
+      const parentMutation = mutations / donated, childTrait = Math.max(0, Math.min(1, traits / donated + (mutate.checked ? (Math.random() - .5) * parentMutation * 2 : 0))), childMutation = Math.max(.005, Math.min(.2, parentMutation + (mutate.checked ? (Math.random() - .5) * .02 : 0))), targetY = (y + 12) % height, targetX = (x + 12) % width;
       const kernel = [[1, 2, 1], [2, 4, 2], [1, 2, 1]];
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const amount = donated * kernel[dy + 1][dx + 1] / 16, i = index(targetY + dy, targetX + dx); body[i] += amount; traitMass[i] += amount * childTrait; }
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const amount = donated * kernel[dy + 1][dx + 1] / 16, i = index(targetY + dy, targetX + dx); body[i] += amount; traitMass[i] += amount * childTrait; mutationMass[i] += amount * childMutation; }
       birthLog.push({ y: targetY, x: targetX, tick, viable: false });
     }
     function draw() {
@@ -122,6 +129,11 @@
         image.data[4 * i + 3] = 255;
       }
       context.putImageData(image, 0, 0);
+      historyLog.push([body.reduce((a, b) => a + b, 0), structures(), birthLog.length]);
+      if (historyLog.length > 96) historyLog.shift();
+      historyContext.clearRect(0, 0, 96, 24);
+      historyContext.strokeStyle = '#77c66e'; historyContext.beginPath(); historyLog.forEach((row, i) => historyContext.lineTo(i, 24 - Math.min(23, row[0] / 100))); historyContext.stroke();
+      historyContext.strokeStyle = '#73a7ff'; historyContext.beginPath(); historyLog.forEach((row, i) => historyContext.lineTo(i, 24 - Math.min(23, row[1] * 8))); historyContext.stroke();
       const viable = birthLog.filter(birth => birth.viable).length;
       stats.value = `step ${tick} · structures ${structures()} · births ${birthLog.length}/${viable} viable · mass drift ${(mass() - initialMass).toExponential(2)}`;
     }
