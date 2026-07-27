@@ -21,6 +21,10 @@ python morrow.py --steps 500 --every 100
 
 The run prints mass drift and writes frames to `output/`. Most image viewers can open PPM files; they can also be converted later if needed.
 
+## Live view
+
+Open `viewer.html` in a modern browser. It runs the same local three-field rules continuously; green is body matter, blue resource, and red waste. Use the controls to pause, step, reset, or change speed.
+
 ## Check
 
 ```powershell
