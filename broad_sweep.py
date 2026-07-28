@@ -59,7 +59,7 @@ def main() -> None:
     parser.add_argument("--seeds", default="1,2,3", help="comma-separated replicate seeds")
     parser.add_argument("--steps", type=int, default=200000)
     parser.add_argument("--sample-every", type=int, default=5000)
-    parser.add_argument("--workers", type=int, default=min(os.cpu_count() or 4, 16))
+    parser.add_argument("--workers", type=int, default=min(os.cpu_count() or 4, 12))
     parser.add_argument("--out", type=Path, default=Path("Results/broad-sweep.json"))
     parser.add_argument("--no-reproduction", action="store_true")
     args = parser.parse_args()

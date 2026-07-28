@@ -34,6 +34,14 @@ class WorldTests(unittest.TestCase):
         moved = world._transport(world.body, world._neighbor_mean(world.body), steering=5.0)
         self.assertTrue(np.isfinite(moved).all())
 
+    def test_combined_transport_matches_individual_fields(self) -> None:
+        world = World.seeded(seed=2)
+        weights = world._transport_weights(world._neighbor_mean(world.body))
+        masses = np.stack((world.body, world.trait_mass, world.mutation_mass))
+        combined = world._apply_transport_fields(masses, weights)
+        separate = np.stack([world._apply_transport(mass, weights) for mass in masses])
+        self.assertTrue(np.allclose(combined, separate))
+
     def test_component_detection_wraps_at_world_edge(self) -> None:
         body = np.zeros((3, 3))
         body[0, 0] = body[0, 2] = body[1, 0] = body[1, 2] = 1.0
@@ -78,6 +86,16 @@ class WorldTests(unittest.TestCase):
         self.assertEqual(len(births), 1)
         self.assertTrue(np.isclose(world.total_mass, before, atol=1e-10))
         self.assertGreaterEqual(births[0].mutation_rate, 0.005)
+
+    def test_viable_births_leave_the_pending_assessment_queue(self) -> None:
+        body = np.zeros((24, 24)); body[10:13, 10:13] = 2.0
+        world = World(body, np.ones_like(body), np.zeros_like(body), body * 0.7, body * 0.06, np.ones_like(body))
+        birth = world.intrinsic_reproduction()[0]
+        y, x = birth.center
+        world.body[y, x] = 1.0
+        world.assess_births(birth.tick + 30)
+        self.assertTrue(birth.viable)
+        self.assertEqual(world.pending_births, [])
 
     def test_ecology_and_evolvability_metrics_are_observable(self) -> None:
         world = World.seeded(seed=9)

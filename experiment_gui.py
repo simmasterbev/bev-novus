@@ -45,7 +45,7 @@ class ExperimentApp(tk.Tk):
         specs = [
             ("Seeds", "1,2,3"), ("Steps", "200000"),
             ("Body yield", "0.30,0.40,0.50"), ("Decay", "0.02,0.03,0.04"),
-            ("Sample every", "1000"), ("Workers", "4"), ("Broad configs", "256"),
+            ("Sample every", "1000"), ("Workers", "3"), ("Broad configs", "256"),
         ]
         for index, (label, default) in enumerate(specs):
             row, column = divmod(index, 3)

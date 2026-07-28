@@ -82,6 +82,10 @@ button. Set the `Broad configs` field (256 by default); it samples that many
 configurations with the selected seeds and uses the same workers, progress display,
 visualizations, and JSON export as the normal grid. The standalone
 `run_broad_sweep.bat` remains available for headless runs.
+
+The GUI defaults to three workers and the headless sweep to twelve. The optimized
+step kernel makes these lower-CPU defaults faster than the previous four- and
+sixteen-worker settings on the development machine.
 Override settings from a terminal, for example:
 
 ```powershell

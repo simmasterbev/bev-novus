@@ -153,6 +153,7 @@ class World:
     steering: float = 2.0
     rng: np.random.Generator = field(default_factory=np.random.default_rng, repr=False)
     births: list[Birth] = field(default_factory=list)
+    pending_births: list[Birth] = field(default_factory=list, repr=False)
     ticks: int = 0
     autonomous_reproduction: bool = True
     waste_inhibition: float = 0.45
@@ -216,9 +217,8 @@ class World:
         affinity = neighbor_body + self.complexity_pressure * neighbor_body + 0.35 * self.resource - self.waste_inhibition * self.waste
         steering = 0.5 + 3.0 * self.trait_field()
         weights = self._transport_weights(affinity, steering)
-        self.body = self._apply_transport(self.body, weights)
-        self.trait_mass = self._apply_transport(self.trait_mass, weights)
-        self.mutation_mass = self._apply_transport(self.mutation_mass, weights)
+        self.body, self.trait_mass, self.mutation_mass = self._apply_transport_fields(
+            np.stack((self.body, self.trait_mass, self.mutation_mass)), weights)
         traits = self.trait_field()
         connectedness = np.divide(neighbor_body, self.body + neighbor_body, out=np.zeros_like(self.body), where=self.body + neighbor_body > 1e-12)
         intake = np.minimum(self.resource, self.metabolism_rate * (0.5 + traits) * self.body * self.resource * (1.0 + self.complexity_pressure * connectedness))
@@ -325,14 +325,19 @@ class World:
                 self.mutation_mass[y, x] += amount * child_mutation
         birth = Birth(parent_id, parent_trait, child_trait, child_mutation, target, tick)
         self.births.append(birth)
+        self.pending_births.append(birth)
         return [birth]
 
     def assess_births(self, tick: int, delay: int = 30, minimum_mass: float = 0.4) -> None:
-        for birth in self.births:
+        pending = []
+        for birth in self.pending_births:
             if not birth.viable and tick - birth.tick >= delay:
                 y, x = birth.center
                 patch = self.body.take(range(y - 2, y + 3), axis=0, mode="wrap").take(range(x - 2, x + 3), axis=1, mode="wrap")
                 birth.viable = float(patch.sum()) >= minimum_mass
+            if not birth.viable:
+                pending.append(birth)
+        self.pending_births = pending
 
     def maintenance_probe(self, steps: int = 120) -> tuple[float, float]:
         """Compare final body mass with metabolism enabled versus switched off."""
@@ -374,23 +379,43 @@ class World:
                      complexity_pressure=self.complexity_pressure, external_delta=self.external_delta)
 
     def _neighbor_mean(self, field: np.ndarray) -> np.ndarray:
-        return (field + np.roll(field, 1, 0) + np.roll(field, -1, 0) + np.roll(field, 1, 1) + np.roll(field, -1, 1)) / 5.0
+        result = field.copy()
+        result[1:] += field[:-1]; result[0] += field[-1]
+        result[:-1] += field[1:]; result[-1] += field[0]
+        result[:, 1:] += field[:, :-1]; result[:, 0] += field[:, -1]
+        result[:, :-1] += field[:, 1:]; result[:, -1] += field[:, 0]
+        return result / 5.0
 
     def _transport(self, mass: np.ndarray, affinity: np.ndarray, steering: np.ndarray | float | None = None) -> np.ndarray:
         return self._apply_transport(mass, self._transport_weights(affinity, steering))
 
     def _transport_weights(self, affinity: np.ndarray, steering: np.ndarray | float | None = None) -> np.ndarray:
-        directions = ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))
         steering = self.steering if steering is None else steering
-        scores = [np.zeros_like(affinity)] + [steering * (np.roll(affinity, (-dy, -dx), axis=(0, 1)) - affinity) for dy, dx in directions[1:]]
-        scores = np.stack(scores)
+        scores = np.empty((5, *affinity.shape), dtype=affinity.dtype)
+        scores[0] = 0.0
+        scores[1, :-1] = affinity[1:] - affinity[:-1]; scores[1, -1] = affinity[0] - affinity[-1]
+        scores[2, 1:] = affinity[:-1] - affinity[1:]; scores[2, 0] = affinity[-1] - affinity[0]
+        scores[3, :, :-1] = affinity[:, 1:] - affinity[:, :-1]; scores[3, :, -1] = affinity[:, 0] - affinity[:, -1]
+        scores[4, :, 1:] = affinity[:, :-1] - affinity[:, 1:]; scores[4, :, 0] = affinity[:, -1] - affinity[:, 0]
+        scores[1:] *= steering
         scores -= scores.max(axis=0, keepdims=True)
-        weights = np.exp(np.clip(scores, -60.0, 0.0))
-        return (1.0 - self.diffusion) * weights / weights.sum(axis=0, keepdims=True) + self.diffusion / 5.0
+        np.clip(scores, -60.0, 0.0, out=scores)
+        np.exp(scores, out=scores)
+        scores *= (1.0 - self.diffusion) / scores.sum(axis=0, keepdims=True)
+        scores += self.diffusion / 5.0
+        return scores
 
     def _apply_transport(self, mass: np.ndarray, weights: np.ndarray) -> np.ndarray:
         directions = ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))
         return sum(np.roll(mass * weight, direction, axis=(0, 1)) for weight, direction in zip(weights, directions))
+
+    def _apply_transport_fields(self, masses: np.ndarray, weights: np.ndarray) -> np.ndarray:
+        result = masses * weights[0]
+        result[:, 1:] += masses[:, :-1] * weights[1, :-1]; result[:, 0] += masses[:, -1] * weights[1, -1]
+        result[:, :-1] += masses[:, 1:] * weights[2, 1:]; result[:, -1] += masses[:, 0] * weights[2, 0]
+        result[:, :, 1:] += masses[:, :, :-1] * weights[3, :, :-1]; result[:, :, 0] += masses[:, :, -1] * weights[3, :, -1]
+        result[:, :, :-1] += masses[:, :, 1:] * weights[4, :, 1:]; result[:, :, -1] += masses[:, :, 0] * weights[4, :, 0]
+        return result
 
     def write_ppm(self, path: Path) -> None:
         def scale(field: np.ndarray) -> np.ndarray:
