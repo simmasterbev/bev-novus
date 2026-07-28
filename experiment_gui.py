@@ -238,6 +238,9 @@ class ExperimentApp(tk.Tk):
 
     def add_gpu_report(self, report: dict) -> None:
         self.gpu_report = report
+        report_path = Path(__file__).with_name("Results") / "gui-gpu-latest.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         self.results = report["replays"]
         for result in self.results:
             self.add_result(result, int(self.progress["value"]), self.total_jobs)
