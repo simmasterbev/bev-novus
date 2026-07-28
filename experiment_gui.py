@@ -259,11 +259,11 @@ class ExperimentApp(tk.Tk):
                     state = "STALE" if age > 3 else "LIVE"
                     step = card["frames"] * card["interval"]
                     card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\n{state} • frame {card["frames"]} • step ~{step:,} • {age:.1f}s ago')
-            except tk.TclError:
-                pass
+            except (tk.TclError, OSError) as error:
+                card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nFRAME READ ERROR • {str(error)[:90]}')
         if self.live_cards:
             self.view_status.set(f"{len(self.live_cards)} simulations • {refreshing} updating now")
-        if self.live_previews.get() and self.stop_button["state"] == "normal":
+        if self.live_previews.get() and self.live_cards:
             self.after(750, self._refresh_live_previews)
 
     def _add_live_card(self, path: str, index: int, label: str, seed: int, interval: int = 0) -> None:
