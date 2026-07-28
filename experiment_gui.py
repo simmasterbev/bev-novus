@@ -209,11 +209,12 @@ class ExperimentApp(tk.Tk):
         snapshot_dir.mkdir(parents=True, exist_ok=True)
         for index, job in enumerate(jobs, 1):
             snapshot_path = snapshot_dir / f"run-{index:04d}.ppm"
+            snapshot_path.unlink(missing_ok=True)
             job["snapshot_path"] = str(snapshot_path)
             if self.live_previews.get():
                 job["live_snapshot_path"] = str(snapshot_path)
                 job["live_snapshot_every"] = max(250, int(self.fields["Sample every"].get()))
-                self._add_live_card(str(snapshot_path), index, job["label"], job["seed"])
+                self._add_live_card(str(snapshot_path), index, job["label"], job["seed"], job["live_snapshot_every"])
         self.stop_event.clear()
         self.total_jobs = len(jobs)
         self.completed_jobs = 0
@@ -238,6 +239,7 @@ class ExperimentApp(tk.Tk):
         refreshing = 0
         for path, card in self.live_cards.items():
             if not Path(path).exists():
+                card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nQUEUED • waiting for first frame')
                 continue
             try:
                 mtime = Path(path).stat().st_mtime_ns
@@ -247,11 +249,16 @@ class ExperimentApp(tk.Tk):
                     card["image"].configure(image=image)
                     card["mtime"] = mtime
                     card["updated"] = now
-                    card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nUPDATING • frame refreshed {time.strftime("%H:%M:%S")}')
+                    card["frames"] += 1
+                    step = card["frames"] * card["interval"]
+                    card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nUPDATING • frame {card["frames"]} • step ~{step:,} • {time.strftime("%H:%M:%S")}')
                 if now - card["updated"] < 1.5:
                     refreshing += 1
                 elif card["state"] == "running":
-                    card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nLIVE • last frame {time.strftime("%H:%M:%S", time.localtime(card["updated"]))}')
+                    age = now - card["updated"]
+                    state = "STALE" if age > 3 else "LIVE"
+                    step = card["frames"] * card["interval"]
+                    card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\n{state} • frame {card["frames"]} • step ~{step:,} • {age:.1f}s ago')
             except tk.TclError:
                 pass
         if self.live_cards:
@@ -259,14 +266,15 @@ class ExperimentApp(tk.Tk):
         if self.live_previews.get() and self.stop_button["state"] == "normal":
             self.after(750, self._refresh_live_previews)
 
-    def _add_live_card(self, path: str, index: int, label: str, seed: int) -> None:
+    def _add_live_card(self, path: str, index: int, label: str, seed: int, interval: int = 0) -> None:
         card = ttk.Frame(self.visual_inner, padding=8, relief="ridge")
         image = ttk.Label(card, text="waiting for first frame", anchor="center")
         image.pack(fill="x")
         meta = ttk.Label(card, text=f"RUN {index:04d} • {label} • seed {seed}\nQUEUED", justify="left")
         meta.pack(fill="x", pady=(6, 0))
         self.live_cards[path] = {"card": card, "image": image, "meta": meta, "run": f"RUN {index:04d}",
-                                 "label": label, "seed": seed, "mtime": -1, "updated": 0.0, "state": "running"}
+                                 "label": label, "seed": seed, "mtime": -1, "updated": 0.0, "frames": 0,
+                                 "interval": interval, "state": "running"}
         self._relayout_live_cards()
 
     def _relayout_live_cards(self, width: int | None = None) -> None:
