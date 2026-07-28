@@ -8,6 +8,8 @@ Version 2.2 adds renewable ecology and dormancy on top of the initial roadmap au
 - seed interval, seed fraction, mutation scale, and mutation/recycling toggles;
 - deterministic starting-world seed, resource/body patch counts, patch strengths, and source scale.
 - resource regrowth/capacity, waste decay/diffusion, and dormancy threshold/cost.
+- complexity pressure, which rewards resource-supported cells embedded in connected neighborhoods;
+- selectable viewer resolutions of 96×72, 144×108, and 192×144.
 
 The same core rules are available from `morrow.py` flags, so browser exploration can be reproduced from the command line.
 

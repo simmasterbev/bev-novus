@@ -32,6 +32,7 @@
     <label><input id="recycle" type="checkbox" checked> Recycling</label>
     <label><input id="spatial" type="checkbox" checked> Spatial resources</label>
     <label><input id="mutate" type="checkbox" checked> Mutation</label>
+    <label>Resolution <select id="resolution"><option value="96x72">96 × 72</option><option value="144x108">144 × 108</option><option value="192x144">192 × 144</option></select></label>
     <label>Steps / frame <input id="speed" type="range" min="1" max="30" value="6"><output id="speed-value">6</output></label>
     <output id="stats" aria-live="polite"></output>
   </div>
@@ -60,6 +61,7 @@
       <label>Waste diffusion <output id="waste-diffusion-value">0.12</output><input id="waste-diffusion" type="range" min="0" max="0.5" step="0.01" value="0.12"></label>
       <label>Dormancy threshold <output id="dormancy-threshold-value">0.08</output><input id="dormancy-threshold" type="range" min="0" max="0.3" step="0.01" value="0.08"></label>
       <label>Dormancy cost <output id="dormancy-cost-value">0.15</output><input id="dormancy-cost" type="range" min="0" max="1" step="0.05" value="0.15"></label>
+      <label>Complexity pressure <output id="complexity-value">0.35</output><input id="complexity" type="range" min="0" max="1.5" step="0.05" value="0.35"></label>
     </div>
     <div class="controls"><button id="apply-config" type="button">Apply starting world</button><button id="high-flux" type="button">Load High-Flux Oasis</button><button id="export-config" type="button">Export config</button><label>Import config <input id="config-file" type="file" accept="application/json"></label><span>Rule sliders apply on the next step; starting-world fields apply when reset.</span></div>
   </details>
@@ -73,16 +75,16 @@
   </details>
 
   <script>
-    const height = 72, width = 96, cells = height * width;
+    let height = 72, width = 96, cells = height * width;
     const canvas = document.getElementById('world');
     const context = canvas.getContext('2d');
-    const image = context.createImageData(width, height);
+    let image = context.createImageData(width, height);
     const pause = document.getElementById('pause');
     const speed = document.getElementById('speed');
     const speedValue = document.getElementById('speed-value');
     const stats = document.getElementById('stats');
     const reproduce = document.getElementById('reproduce'), recycle = document.getElementById('recycle'), spatial = document.getElementById('spatial'), mutate = document.getElementById('mutate');
-    const ruleIds = ['resource-strength', 'body-strength', 'source-scale', 'metabolism', 'yield', 'decay', 'waste', 'recycle-rate', 'diffusion', 'steering', 'interval', 'fraction', 'mutation-scale', 'regrowth', 'capacity', 'waste-decay', 'waste-diffusion', 'dormancy-threshold', 'dormancy-cost'];
+    const ruleIds = ['resource-strength', 'body-strength', 'source-scale', 'metabolism', 'yield', 'decay', 'waste', 'recycle-rate', 'diffusion', 'steering', 'interval', 'fraction', 'mutation-scale', 'regrowth', 'capacity', 'waste-decay', 'waste-diffusion', 'dormancy-threshold', 'dormancy-cost', 'complexity'];
     let randomState = 1;
     const history = document.getElementById('history'), historyContext = history.getContext('2d'), patternsPanel = document.getElementById('patterns');
     let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog, currentPatterns = [], previousPatterns = [], nextPatternId = 1, patternTracks = new Map(), patternEvents = [], trackedTick = -1, faultTick = null, faultPhase = '';
@@ -94,9 +96,9 @@
       metabolism: value('metabolism'), bodyYield: value('yield'), decay: value('decay'), waste: value('waste'), recycleRate: value('recycle-rate'),
       diffusion: value('diffusion'), steering: value('steering'), interval: Math.max(1, value('interval')), fraction: value('fraction'), mutationScale: value('mutation-scale'),
       regrowth: value('regrowth'), capacity: value('capacity'), wasteDecay: value('waste-decay'), wasteDiffusion: value('waste-diffusion'),
-      dormancyThreshold: value('dormancy-threshold'), dormancyCost: value('dormancy-cost')
+      dormancyThreshold: value('dormancy-threshold'), dormancyCost: value('dormancy-cost'), complexity: value('complexity')
     }; }
-    const startingIds = ['world-seed', 'resource-patches', 'body-patches'];
+    const startingIds = ['world-seed', 'resource-patches', 'body-patches', 'resolution'];
     function configSnapshot(name = 'custom') {
       const values = Object.fromEntries([...ruleIds, ...startingIds].map(id => [id, document.getElementById(id).value]));
       return { schema: 'bev-novus-config/v1', name, values, toggles: { reproduce: reproduce.checked, recycle: recycle.checked, spatial: spatial.checked, mutate: mutate.checked } };
@@ -105,13 +107,14 @@
       if (!snapshot || typeof snapshot !== 'object' || !snapshot.values) throw new Error('Invalid Bev Novus config');
       [...ruleIds, ...startingIds].forEach(id => { if (snapshot.values[id] !== undefined) document.getElementById(id).value = snapshot.values[id]; });
       if (snapshot.toggles) Object.entries(snapshot.toggles).forEach(([id, checked]) => { if (document.getElementById(id)) document.getElementById(id).checked = Boolean(checked); });
-      refreshParameterLabels(); reset();
+      refreshParameterLabels(); applyResolution(); reset();
     }
+    function applyResolution() { const [nextWidth, nextHeight] = document.getElementById('resolution').value.split('x').map(Number); width = nextWidth; height = nextHeight; cells = width * height; canvas.width = width; canvas.height = height; image = context.createImageData(width, height); }
     function loadHighFlux() { applySnapshot({ name: 'High-Flux Oasis', values: {
       'world-seed': 1, 'resource-patches': 7, 'body-patches': 5, 'resource-strength': 1, 'body-strength': 1.1, 'source-scale': 2.5,
       metabolism: .025, yield: .72, decay: .024, waste: .45, 'recycle-rate': .08, diffusion: .23, steering: 3.8, interval: 190,
       fraction: .24, 'mutation-scale': .04, regrowth: .022, capacity: 1, 'waste-decay': .002, 'waste-diffusion': .35,
-      'dormancy-threshold': .02, 'dormancy-cost': .2
+      'dormancy-threshold': .02, 'dormancy-cost': .2, complexity: .35, resolution: '96x72'
     }, toggles: { reproduce: true, recycle: true, spatial: true, mutate: true } }); }
 
     function index(y, x) { return ((y + height) % height) * width + ((x + width) % width); }
@@ -161,7 +164,7 @@
           pattern.id = `P-${String(nextPatternId++).padStart(3, '0')}`; patternTracks.set(pattern.id, { id: pattern.id, name: pattern.name, born: tick, lastSeen: tick, observations: 1, peakMass: pattern.bodyMass, peakSize: pattern.size }); patternEvents.push({ tick, text: `${pattern.id} emerged as ${pattern.name}` });
         }
       });
-      previousPatterns.filter(old => !used.has(previousPatterns.indexOf(old))).forEach(old => patternEvents.push({ tick, text: `${old.id} disappeared after step ${old.lastSeen}` }));
+      previousPatterns.filter(old => !used.has(previousPatterns.indexOf(old))).forEach(old => { const track = patternTracks.get(old.id); patternEvents.push({ tick, text: `${old.id} disappeared after step ${track ? track.lastSeen : tick}` }); });
       previousPatterns = patterns.map(pattern => ({ ...pattern }));
       if (patternEvents.length > 20) patternEvents.shift();
       return patterns;
@@ -189,10 +192,11 @@
     function step() {
       if (faultTick !== null) return;
       const config = settings();
-      const affinity = new Float64Array(cells), moved = new Float64Array(cells), movedTraits = new Float64Array(cells), movedMutation = new Float64Array(cells);
+      const affinity = new Float64Array(cells), neighborBody = new Float64Array(cells), moved = new Float64Array(cells), movedTraits = new Float64Array(cells), movedMutation = new Float64Array(cells);
       for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
         const i = index(y, x);
-        affinity[i] = (body[i] + body[index(y - 1, x)] + body[index(y + 1, x)] + body[index(y, x - 1)] + body[index(y, x + 1)]) / 5 + .35 * resource[i] - config.waste * waste[i];
+        neighborBody[i] = (body[index(y - 1, x)] + body[index(y + 1, x)] + body[index(y, x - 1)] + body[index(y, x + 1)]) / 4;
+        affinity[i] = (body[i] + 4 * neighborBody[i]) / 5 + config.complexity * neighborBody[i] + .35 * resource[i] - config.waste * waste[i];
         if (!Number.isFinite(affinity[i])) return numericalFault('affinity', i);
       }
       for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
@@ -210,7 +214,7 @@
       body = moved; traitMass = movedTraits; mutationMass = movedMutation;
       for (let i = 0; i < cells; i++) {
         const trait = body[i] > 1e-12 ? traitMass[i] / body[i] : .5, mutationRate = body[i] > 1e-12 ? mutationMass[i] / body[i] : .04;
-        const intake = Math.min(resource[i], config.metabolism * (.5 + trait) * body[i] * resource[i]), growth = config.bodyYield * intake;
+        const connectedness = neighborBody[i] / Math.max(body[i] + neighborBody[i], 1e-12), intake = Math.min(resource[i], config.metabolism * (.5 + trait) * body[i] * resource[i] * (1 + config.complexity * connectedness)), growth = config.bodyYield * intake;
         resource[i] -= intake; body[i] += growth; traitMass[i] += trait * growth; mutationMass[i] += mutationRate * growth; waste[i] += (1 - config.bodyYield) * intake;
         const decay = config.decay * body[i] * (body[i] < config.dormancyThreshold ? config.dormancyCost : 1); body[i] -= decay; traitMass[i] -= trait * decay; mutationMass[i] -= mutationRate * decay; waste[i] += decay;
         const regrown = config.regrowth * source[i] * Math.max(0, config.capacity - resource[i]), cleaned = config.wasteDecay * waste[i]; resource[i] += regrown; waste[i] -= cleaned; environmentDelta += regrown - cleaned;
@@ -267,6 +271,7 @@
       ruleIds.forEach(id => { const output = document.getElementById(`${id}-value`); if (output) output.value = document.getElementById(id).value; });
     }
     ruleIds.forEach(id => document.getElementById(id).oninput = refreshParameterLabels);
+    document.getElementById('resolution').onchange = () => { applyResolution(); reset(); };
     document.getElementById('apply-config').onclick = reset;
     document.getElementById('high-flux').onclick = loadHighFlux;
     document.getElementById('export-config').onclick = () => {

@@ -166,6 +166,7 @@ class World:
     waste_diffusion: float = 0.12
     dormancy_threshold: float = 0.08
     dormancy_cost: float = 0.15
+    complexity_pressure: float = 0.35
     external_delta: float = 0.0
 
     def __post_init__(self) -> None:
@@ -211,13 +212,15 @@ class World:
 
     def step(self) -> None:
         """Local periodic transport and metabolism; matter and trait mass move together."""
-        affinity = self._neighbor_mean(self.body) + 0.35 * self.resource - self.waste_inhibition * self.waste
+        neighbor_body = self._neighbor_mean(self.body)
+        affinity = neighbor_body + self.complexity_pressure * neighbor_body + 0.35 * self.resource - self.waste_inhibition * self.waste
         steering = 0.5 + 3.0 * self.trait_field()
         self.body = self._transport(self.body, affinity, steering)
         self.trait_mass = self._transport(self.trait_mass, affinity, steering)
         self.mutation_mass = self._transport(self.mutation_mass, affinity, steering)
         traits = self.trait_field()
-        intake = np.minimum(self.resource, self.metabolism_rate * (0.5 + traits) * self.body * self.resource)
+        connectedness = np.divide(neighbor_body, self.body + neighbor_body, out=np.zeros_like(self.body), where=self.body + neighbor_body > 1e-12)
+        intake = np.minimum(self.resource, self.metabolism_rate * (0.5 + traits) * self.body * self.resource * (1.0 + self.complexity_pressure * connectedness))
         self.resource -= intake
         growth = self.body_yield * intake
         self.body += growth
@@ -367,7 +370,7 @@ class World:
                      resource_regrowth=self.resource_regrowth, resource_capacity=self.resource_capacity,
                      waste_decay=self.waste_decay, waste_diffusion=self.waste_diffusion,
                      dormancy_threshold=self.dormancy_threshold, dormancy_cost=self.dormancy_cost,
-                     external_delta=self.external_delta)
+                     complexity_pressure=self.complexity_pressure, external_delta=self.external_delta)
 
     def _neighbor_mean(self, field: np.ndarray) -> np.ndarray:
         return (field + np.roll(field, 1, 0) + np.roll(field, -1, 0) + np.roll(field, 1, 1) + np.roll(field, -1, 1)) / 5.0
@@ -401,7 +404,7 @@ def run(steps: int, every: int, output: Path, seed: int, probe: bool = False, co
                 "recycle_rate", "seed_interval", "seed_fraction", "mutation_scale"):
         if key in config:
             setattr(world, key, config[key])
-    for key in ("resource_regrowth", "resource_capacity", "waste_decay", "waste_diffusion", "dormancy_threshold", "dormancy_cost"):
+    for key in ("resource_regrowth", "resource_capacity", "waste_decay", "waste_diffusion", "dormancy_threshold", "dormancy_cost", "complexity_pressure"):
         if key in config:
             setattr(world, key, config[key])
     census.update(world.components())
@@ -457,6 +460,7 @@ def main() -> None:
     parser.add_argument("--waste-diffusion", type=float, default=0.12)
     parser.add_argument("--dormancy-threshold", type=float, default=0.08)
     parser.add_argument("--dormancy-cost", type=float, default=0.15)
+    parser.add_argument("--complexity-pressure", type=float, default=0.35)
     args = parser.parse_args()
     if args.steps < 0 or args.every < 1:
         parser.error("--steps must be non-negative and --every must be at least 1")
