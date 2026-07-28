@@ -34,6 +34,7 @@ class ExperimentApp(tk.Tk):
         self.worker: threading.Thread | None = None
         self.total_jobs = 0
         self.completed_jobs = 0
+        self.images: list[tk.PhotoImage] = []
         self.fields: dict[str, tk.StringVar] = {}
         self._build()
 
@@ -73,14 +74,31 @@ class ExperimentApp(tk.Tk):
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=1, value=0)
         self.progress.pack(fill="x", padx=10, pady=(0, 6))
 
+        notebook = ttk.Notebook(self)
+        notebook.pack(fill="both", expand=True, padx=10, pady=(8, 10))
+        table_frame = ttk.Frame(notebook)
+        notebook.add(table_frame, text="Results")
         columns = ("label", "seed", "live", "births", "viable", "compactness", "boundary", "diversity", "groups")
-        self.table = ttk.Treeview(self, columns=columns, show="headings", height=21)
+        self.table = ttk.Treeview(table_frame, columns=columns, show="headings", height=21)
         headings = {"label": "Condition", "seed": "Seed", "live": "Live", "births": "Births", "viable": "Viable",
                     "compactness": "Compact", "boundary": "Boundary", "diversity": "Trait diversity", "groups": "Groups"}
         for column in columns:
             self.table.heading(column, text=headings[column])
             self.table.column(column, width=110 if column == "label" else 85, anchor="center")
-        self.table.pack(fill="both", expand=True, padx=10, pady=(8, 10))
+        self.table.pack(fill="both", expand=True)
+
+        visual_frame = ttk.Frame(notebook)
+        notebook.add(visual_frame, text="Visualizations")
+        visual_frame.rowconfigure(0, weight=1)
+        visual_frame.columnconfigure(0, weight=1)
+        self.visual_canvas = tk.Canvas(visual_frame, background="black", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(visual_frame, orient="vertical", command=self.visual_canvas.yview)
+        self.visual_canvas.configure(yscrollcommand=scrollbar.set)
+        self.visual_canvas.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.visual_inner = ttk.Frame(self.visual_canvas)
+        self.visual_window = self.visual_canvas.create_window((8, 8), window=self.visual_inner, anchor="nw")
+        self.visual_inner.bind("<Configure>", lambda _: self.visual_canvas.configure(scrollregion=self.visual_canvas.bbox("all")))
 
     def jobs(self) -> list[dict]:
         seeds = numbers(self.fields["Seeds"].get(), int)
@@ -120,6 +138,13 @@ class ExperimentApp(tk.Tk):
             return
         self.results.clear()
         self.table.delete(*self.table.get_children())
+        for child in self.visual_inner.winfo_children():
+            child.destroy()
+        self.images.clear()
+        snapshot_dir = Path(__file__).with_name("Results") / "gui-snapshots"
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        for index, job in enumerate(jobs, 1):
+            job["snapshot_path"] = str(snapshot_dir / f"run-{index:04d}.ppm")
         self.stop_event.clear()
         self.total_jobs = len(jobs)
         self.completed_jobs = 0
@@ -133,17 +158,19 @@ class ExperimentApp(tk.Tk):
     def _run(self, jobs: list[dict], workers: int) -> None:
         completed = 0
         with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = [pool.submit(run_one, job) for job in jobs]
-            for future in as_completed(futures):
+            future_jobs = {pool.submit(run_one, job): job for job in jobs}
+            for future in as_completed(future_jobs):
                 if self.stop_event.is_set():
-                    for pending in futures:
+                    for pending in future_jobs:
                         pending.cancel()
                     break
+                job = future_jobs[future]
                 try:
                     result = asdict(future.result())
                 except Exception as error:  # keep one failed run from hiding all completed results
                     result = {"label": f"ERROR: {error}", "seed": "", "live": "", "births": "", "viable": "",
                               "compactness": 0, "boundary_ratio": 0, "trait_diversity": 0.0, "groups": ""}
+                result["_snapshot_path"] = job["snapshot_path"]
                 self.results.append(result)
                 completed += 1
                 self.after(0, self.add_result, result, completed, len(jobs))
@@ -154,6 +181,14 @@ class ExperimentApp(tk.Tk):
                   f'{result["compactness"]:.3f}', f'{result["boundary_ratio"]:.3f}',
                   f'{result["trait_diversity"]:.3g}', result["groups"])
         self.table.insert("", "end", values=values)
+        snapshot = result.get("_snapshot_path")
+        if snapshot and Path(snapshot).exists():
+            image = tk.PhotoImage(file=snapshot).zoom(2, 2)
+            self.images.append(image)
+            card = ttk.Frame(self.visual_inner, padding=6, relief="ridge")
+            card.grid(row=(len(self.images) - 1) // 4, column=(len(self.images) - 1) % 4, padx=6, pady=6, sticky="n")
+            ttk.Label(card, image=image).pack()
+            ttk.Label(card, text=f'{result["label"]}\nseed {result["seed"]} — live {result["live"]}').pack()
         self.progress.configure(value=completed)
         self.status.set(f"Results generated: {completed}/{total} — {total - completed} remaining")
 
@@ -173,7 +208,8 @@ class ExperimentApp(tk.Tk):
             return
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=(("JSON", "*.json"), ("All files", "*.*")))
         if path:
-            Path(path).write_text(json.dumps(self.results, indent=2), encoding="utf-8")
+            exportable = [{key: value for key, value in result.items() if not key.startswith("_")} for result in self.results]
+            Path(path).write_text(json.dumps(exportable, indent=2), encoding="utf-8")
             self.status.set(f"Saved {Path(path).name}")
 
 

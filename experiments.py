@@ -58,7 +58,7 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
                   waste_decay: float = 0.002, waste_diffusion: float = 0.12,
                   dormancy_threshold: float = 0.08, dormancy_cost: float = 0.15,
                   body_yield: float = 0.72, decay_rate: float = 0.012, complexity_pressure: float = 0.35,
-                  sample_every: int = 1) -> Result:
+                  sample_every: int = 1, snapshot_path: Path | None = None) -> Result:
     world, census = World.seeded(seed=seed, source_scale=source_scale, resource_patches=resource_patches,
                                  body_patches=body_patches, resource_strength=resource_strength,
                                  body_strength=body_strength), PatternCensus()
@@ -91,6 +91,8 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
         world.assess_births(tick)
     eco, evo = ecology_metrics(world, census), evolvability_metrics(world, census)
     individual, collective = individuality_metrics(world, census), collective_metrics(world, census)
+    if snapshot_path is not None:
+        world.write_ppm(Path(snapshot_path))
     return Result(label, seed, len(census.current), len(world.births), int(evo["viable_births"]),
                   evo["trait_diversity"], eco["occupied_trait_niches"], abs(world.total_mass - baseline - world.external_delta),
                   individual["compactness"], individual["boundary_ratio"], individual["ambiguous_identity"], collective["multi_core_groups"])
