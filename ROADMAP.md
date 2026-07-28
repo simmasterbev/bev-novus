@@ -24,7 +24,7 @@ Implemented foundations:
 
 The foundation is a respectable artificial-chemistry substrate, but it is not evidence of open-ended evolution.
 
-## Phase 1 - Better physics
+## Phase 1 - Better physics (complete as isolated prototype)
 
 Goal: introduce simple force-bearing body matter without replacing the existing world until the mechanics are validated.
 
@@ -42,7 +42,7 @@ Acceptance: isolated bodies remain finite, do not collapse into one point, and s
 
 Current implementation: `particle_prototype.py` provides periodic spatial bins, minimum-image neighbors, short-range repulsion, medium-range attraction, overdamped force motion, drag, mobility, and deterministic seeded worlds. It is intentionally separate from the field engine until stability and coupling tests pass.
 
-### 1.2 Overdamped particle motion
+### 1.2 Overdamped particle motion (complete)
 
 Use `velocity = mobility * force` and `position += velocity * dt` before considering momentum or rigid-body physics.
 
@@ -55,11 +55,17 @@ Tasks:
 
 Acceptance: bodies deform and translate smoothly, mass drift remains within the existing accounting gate, and the force model is faster than an O(N²) implementation at comparable particle counts.
 
-### 1.3 Hybrid world
+Prototype evidence: a 9-run fixed-seed sweep across timesteps `0.02`, `0.05`, and `0.1` remained finite and bounded for 500 steps per run. The current maximum observed speed was `9.41` prototype units per step.
+
+### 1.3 Hybrid world (complete as isolated prototype)
 
 Keep resource and waste as grid fields while representing body matter experimentally as particles. Maintain a field-only control so any benefit from mechanics is measurable.
 
 Acceptance: particle and field controls can run from the same seed/configuration and report comparable persistence, resource intake, reproduction, and morphology metrics.
+
+Current implementation: `HybridParticleWorld` couples particle body mass to resource and waste grids, resource regrowth, consumption, body yield, waste production/decay, resource taxis, and waste avoidance. It includes a deterministic seeded constructor and a no-external-input accounting test.
+
+Phase 1 exit condition: the isolated prototype is complete and tested. Viewer integration remains a separate comparison milestone so the field-only engine stays available as the control.
 
 ## Phase 2 - Internal complexity
 
