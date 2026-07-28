@@ -79,7 +79,7 @@ class ExperimentApp(tk.Tk):
         self.table.pack(fill="both", expand=True, padx=10, pady=(8, 10))
 
     def jobs(self) -> list[dict]:
-        seeds = numbers(self.fields["Seeds"], int)
+        seeds = numbers(self.fields["Seeds"].get(), int)
         steps = int(self.fields["Steps"].get())
         sample_every = int(self.fields["Sample every"].get())
         yields = numbers(self.fields["Body yield"])
