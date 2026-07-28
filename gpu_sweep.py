@@ -152,9 +152,16 @@ class GpuBatch:
 
 
 def replay_one(job: dict) -> dict:
-    result = run_condition(job["label"], job["seed"], job["steps"], sample_every=job["sample_every"],
-                           snapshot_path=job["snapshot_path"], **job["controls"], **job["config"])
-    return {"config_id": job["config_id"], **asdict(result), "_snapshot_path": str(job["snapshot_path"])}
+    try:
+        result = run_condition(job["label"], job["seed"], job["steps"], sample_every=job["sample_every"],
+                               snapshot_path=job["snapshot_path"], **job["controls"], **job["config"])
+        return {"config_id": job["config_id"], **asdict(result), "_snapshot_path": str(job["snapshot_path"])}
+    except Exception as error:  # preserve the rest of a long campaign if one replay fails
+        return {"config_id": job["config_id"], "label": f"ERROR: {job['label']}", "seed": job["seed"],
+                "live": 0, "births": 0, "viable": 0, "trait_diversity": 0.0, "niches": 0.0,
+                "mass_drift": float("nan"), "compactness": 0.0, "boundary_ratio": 0.0,
+                "identity_ambiguity": 0.0, "groups": 0.0, "error": repr(error),
+                "_snapshot_path": str(job["snapshot_path"])}
 
 
 def screen_and_replay(configs: list[dict], seeds: list[int], screen_steps: int, sample_every: int,
@@ -199,13 +206,22 @@ def screen_and_replay(configs: list[dict], seeds: list[int], screen_steps: int, 
                                 "snapshot_path": output_dir / f"gpu-replay-{ident:04d}-seed-{seed}.ppm"})
     replays = []
     with ProcessPoolExecutor(max_workers=max(1, replay_workers)) as pool:
-        futures = [pool.submit(replay_one, job) for job in replay_jobs]
-        for complete, future in enumerate(as_completed(futures), 1):
+        future_jobs = {pool.submit(replay_one, job): job for job in replay_jobs}
+        for complete, future in enumerate(as_completed(future_jobs), 1):
             if stopped and stopped():
-                for pending in futures:
+                for pending in future_jobs:
                     pending.cancel()
                 break
-            replays.append(future.result())
+            job = future_jobs[future]
+            try:
+                replays.append(future.result())
+            except Exception as error:  # defensive guard around worker/pool failures
+                replays.append({"config_id": job["config_id"], "label": f"ERROR: {job['label']}",
+                                "seed": job["seed"], "live": 0, "births": 0, "viable": 0,
+                                "trait_diversity": 0.0, "niches": 0.0, "mass_drift": float("nan"),
+                                "compactness": 0.0, "boundary_ratio": 0.0, "identity_ambiguity": 0.0,
+                                "groups": 0.0, "error": repr(error),
+                                "_snapshot_path": str(job["snapshot_path"])})
             if progress:
                 progress("cpu", complete, len(replay_jobs), "Authoritative CPU replay")
     return {"backend": "gpu-float32-screening+cpu-float64-replay", "screening_claims_births": False,
