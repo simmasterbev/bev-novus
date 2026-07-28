@@ -56,7 +56,9 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
                   resource_strength: float = 1.0, body_strength: float = 0.55,
                   resource_regrowth: float = 0.006, resource_capacity: float = 1.0,
                   waste_decay: float = 0.002, waste_diffusion: float = 0.12,
-                  dormancy_threshold: float = 0.08, dormancy_cost: float = 0.15) -> Result:
+                  dormancy_threshold: float = 0.08, dormancy_cost: float = 0.15,
+                  body_yield: float = 0.72, decay_rate: float = 0.012, complexity_pressure: float = 0.35,
+                  sample_every: int = 1) -> Result:
     world, census = World.seeded(seed=seed, source_scale=source_scale, resource_patches=resource_patches,
                                  body_patches=body_patches, resource_strength=resource_strength,
                                  body_strength=body_strength), PatternCensus()
@@ -67,6 +69,7 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
     world.resource_regrowth, world.resource_capacity = resource_regrowth, resource_capacity
     world.waste_decay, world.waste_diffusion = waste_decay, waste_diffusion
     world.dormancy_threshold, world.dormancy_cost = dormancy_threshold, dormancy_cost
+    world.body_yield, world.decay_rate, world.complexity_pressure = body_yield, decay_rate, complexity_pressure
     if not mutate:
         world.mutation_mass[:] = world.body * 0.005
     if not recycle:
@@ -78,11 +81,13 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
     census.update(world.components())
     for tick in range(steps):
         prior, start = dict(census.current), len(world.births)
-        world.step(); census.update(world.components())
-        for birth in world.births[start:]:
-            if prior:
-                birth.parent_id = min(prior, key=lambda ident: abs(prior[ident].trait - birth.parent_trait))
-            census.register_birth(birth, census.current)
+        world.step()
+        if tick % max(1, sample_every) == 0 or tick == steps - 1:
+            census.update(world.components())
+            for birth in world.births[start:]:
+                if prior:
+                    birth.parent_id = min(prior, key=lambda ident: abs(prior[ident].trait - birth.parent_trait))
+                census.register_birth(birth, census.current)
         world.assess_births(tick)
     eco, evo = ecology_metrics(world, census), evolvability_metrics(world, census)
     individual, collective = individuality_metrics(world, census), collective_metrics(world, census)
