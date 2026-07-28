@@ -68,6 +68,13 @@ Open `dashboard.html` and select that report to compare viable births, persisten
 
 Open `audit.html` to inspect the replicated 2.0 release gates and their retained failures.
 
+## Local parallel experiment runner
+
+Run `python experiment_gui.py` to open a small Tkinter tool. Enter comma-separated
+values for seeds, body yield, and decay; choose the step count and worker count;
+then run the Cartesian product. Results appear as each run finishes and can be
+exported as JSON. The default grid matches the recent 200k-step persistence test.
+
 ## Roadmap and 2.0 audit
 
 See `ROADMAP.md` for the full release sequence and test gates. Version 2.0 publishes the audit state of those gates, including failures and null results.
