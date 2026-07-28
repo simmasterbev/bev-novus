@@ -69,6 +69,8 @@ def run_particle_condition(label: str, seed: int, steps: int = 480, *, metabolis
     world.particle.masses[:] = max(0.05, body_strength / 2.0)
     baseline = world.total_mass
     external_delta = 0.0
+    if live_snapshot_path is not None:
+        _atomic_snapshot(Path(live_snapshot_path), lambda path: _write_particle_ppm(world, path))
     for _step in range(steps):
         regrowth = resource_regrowth * world.source * np.maximum(resource_capacity - world.resource, 0.0)
         external_delta += float(regrowth.sum())
@@ -141,6 +143,8 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
         world.resource_source[:] = 1.0
         world.resource[:] = world.resource.mean()
     baseline = world.total_mass
+    if live_snapshot_path is not None:
+        _atomic_snapshot(Path(live_snapshot_path), world.write_ppm)
     census.update(world.components())
     registered_births = 0
     for tick in range(steps):

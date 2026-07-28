@@ -213,7 +213,7 @@ class ExperimentApp(tk.Tk):
             job["snapshot_path"] = str(snapshot_path)
             if self.live_previews.get():
                 job["live_snapshot_path"] = str(snapshot_path)
-                job["live_snapshot_every"] = max(250, int(self.fields["Sample every"].get()))
+                job["live_snapshot_every"] = max(25, min(250, int(self.fields["Sample every"].get())))
                 self._add_live_card(str(snapshot_path), index, job["label"], job["seed"], job["live_snapshot_every"])
         self.stop_event.clear()
         self.total_jobs = len(jobs)
@@ -381,6 +381,7 @@ class ExperimentApp(tk.Tk):
                 except Exception as error:  # keep one failed run from hiding all completed results
                     result = {"label": f"ERROR: {error}", "seed": "", "live": "", "births": "", "viable": "",
                               "compactness": 0, "boundary_ratio": 0, "trait_diversity": 0.0, "groups": ""}
+                    result["_error"] = str(error)
                 result["_snapshot_path"] = job["snapshot_path"]
                 self.results.append(result)
                 completed += 1
@@ -389,6 +390,11 @@ class ExperimentApp(tk.Tk):
 
     def add_result(self, result: dict, completed: int, total: int) -> None:
         snapshot = result.get("_snapshot_path")
+        if result.get("_error") and snapshot in self.live_cards:
+            card = self.live_cards[snapshot]
+            card["state"] = "error"
+            card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nERROR • {result["_error"][:90]}')
+            snapshot = None
         if snapshot in self.live_cards and snapshot and Path(snapshot).exists():
             image = tk.PhotoImage(file=snapshot).zoom(2, 2)
             self.live_images[snapshot] = image
