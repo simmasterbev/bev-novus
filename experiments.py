@@ -46,6 +46,7 @@ def _write_particle_ppm(world: HybridParticleWorld, path: Path) -> None:
 
 
 def _atomic_snapshot(path: Path, writer) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.tmp")
     writer(temporary)
     os.replace(temporary, path)
