@@ -77,9 +77,11 @@ exported as JSON. The default grid matches the recent 200k-step persistence test
 On Windows, double-click `run_experiment_gui.bat` to launch it; it uses the bundled
 runtime when available so NumPy is found automatically.
 
-For a broad screening sweep across all major rules, run `run_broad_sweep.bat`.
-It samples 256 configurations with three seeds each, uses up to 16 workers, runs
-200,000 steps per job, and writes incremental results to `Results/broad-sweep.json`.
+For a broad screening sweep across all major rules, use the GUI's **Broad sweep**
+button. Set the `Broad configs` field (256 by default); it samples that many
+configurations with the selected seeds and uses the same workers, progress display,
+visualizations, and JSON export as the normal grid. The standalone
+`run_broad_sweep.bat` remains available for headless runs.
 Override settings from a terminal, for example:
 
 ```powershell

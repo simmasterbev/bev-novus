@@ -10,6 +10,7 @@ from dataclasses import asdict
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from broad_sweep import latin_hypercube
 from experiments import run_condition
 
 
@@ -44,7 +45,7 @@ class ExperimentApp(tk.Tk):
         specs = [
             ("Seeds", "1,2,3"), ("Steps", "200000"),
             ("Body yield", "0.30,0.40,0.50"), ("Decay", "0.02,0.03,0.04"),
-            ("Sample every", "1000"), ("Workers", "4"),
+            ("Sample every", "1000"), ("Workers", "4"), ("Broad configs", "256"),
         ]
         for index, (label, default) in enumerate(specs):
             row, column = divmod(index, 3)
@@ -66,6 +67,8 @@ class ExperimentApp(tk.Tk):
             ttk.Checkbutton(options, text=label, variable=variable).pack(side="left", padx=(0, 14))
         self.start_button = ttk.Button(options, text="Run grid", command=self.start)
         self.start_button.pack(side="left", padx=8)
+        self.broad_button = ttk.Button(options, text="Broad sweep", command=lambda: self.start(broad=True))
+        self.broad_button.pack(side="left")
         self.stop_button = ttk.Button(options, text="Stop", command=self.stop, state="disabled")
         self.stop_button.pack(side="left")
         ttk.Button(options, text="Export results", command=self.export).pack(side="left", padx=8)
@@ -100,14 +103,24 @@ class ExperimentApp(tk.Tk):
         self.visual_window = self.visual_canvas.create_window((8, 8), window=self.visual_inner, anchor="nw")
         self.visual_inner.bind("<Configure>", lambda _: self.visual_canvas.configure(scrollregion=self.visual_canvas.bbox("all")))
 
-    def jobs(self) -> list[dict]:
+    def jobs(self, broad: bool = False) -> list[dict]:
         seeds = numbers(self.fields["Seeds"].get(), int)
         steps = int(self.fields["Steps"].get())
         sample_every = int(self.fields["Sample every"].get())
-        yields = numbers(self.fields["Body yield"].get())
-        decays = numbers(self.fields["Decay"].get())
         if steps < 1 or sample_every < 1:
             raise ValueError("Steps and sample interval must be positive.")
+        if broad:
+            config_count = int(self.fields["Broad configs"].get())
+            if config_count < 1:
+                raise ValueError("Broad configs must be positive.")
+            configs = latin_hypercube(config_count, seed=7)
+            return [{"label": f"lhs-{index:04d}", "seed": seed, "steps": steps,
+                     "sample_every": sample_every, "reproduce": self.reproduce.get(),
+                     "mutate": self.mutate.get(), "recycle": self.recycle.get(),
+                     "spatial": self.spatial.get(), **config}
+                    for index, config in enumerate(configs, 1) for seed in seeds]
+        yields = numbers(self.fields["Body yield"].get())
+        decays = numbers(self.fields["Decay"].get())
         jobs = []
         for body_yield in yields:
             for decay_rate in decays:
@@ -129,9 +142,9 @@ class ExperimentApp(tk.Tk):
                     })
         return jobs
 
-    def start(self) -> None:
+    def start(self, broad: bool = False) -> None:
         try:
-            jobs = self.jobs()
+            jobs = self.jobs(broad)
             workers = max(1, int(self.fields["Workers"].get()))
         except (TypeError, ValueError) as error:
             messagebox.showerror("Invalid setup", str(error))
@@ -150,6 +163,7 @@ class ExperimentApp(tk.Tk):
         self.completed_jobs = 0
         self.progress.configure(maximum=self.total_jobs, value=0)
         self.start_button.configure(state="disabled")
+        self.broad_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status.set(f"Running 0/{len(jobs)} — {workers} parallel workers — generating results")
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
@@ -194,6 +208,7 @@ class ExperimentApp(tk.Tk):
 
     def finished(self, completed: int, total: int) -> None:
         self.start_button.configure(state="normal")
+        self.broad_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.progress.configure(value=completed)
         self.status.set("Stopped" if self.stop_event.is_set() else f"Finished — {completed}/{total} results generated")
