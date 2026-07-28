@@ -82,8 +82,8 @@ class ExperimentApp(tk.Tk):
         seeds = numbers(self.fields["Seeds"].get(), int)
         steps = int(self.fields["Steps"].get())
         sample_every = int(self.fields["Sample every"].get())
-        yields = numbers(self.fields["Body yield"])
-        decays = numbers(self.fields["Decay"])
+        yields = numbers(self.fields["Body yield"].get())
+        decays = numbers(self.fields["Decay"].get())
         if steps < 1 or sample_every < 1:
             raise ValueError("Steps and sample interval must be positive.")
         jobs = []
