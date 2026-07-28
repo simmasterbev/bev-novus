@@ -86,6 +86,25 @@ visualizations, and JSON export as the normal grid. The standalone
 The GUI defaults to three workers and the headless sweep to twelve. The optimized
 step kernel makes these lower-CPU defaults faster than the previous four- and
 sixteen-worker settings on the development machine.
+
+### Optional GPU screening
+
+Run `setup_gpu.bat` once, then launch the normal experiment GUI and choose
+**GPU screen + replay**. GPU screening batches float32 worlds on an NVIDIA GPU,
+corrects aggregate mass at each sample interval, and ranks persistence/field
+diversity without making reproduction claims. The selected configurations are
+then replayed through the unchanged float64 CPU model, where births, lineage,
+viability, conservation, and snapshots remain authoritative. `Steps` controls
+CPU replay length; `GPU screen steps`, `GPU batch`, and `Replay top` control the
+screening stage. Exporting results preserves both screening and replay records.
+
+The optional CUDA packages live in `.gpu-packages/` and are not committed. The
+CPU runner remains available when CUDA is absent.
+
+On the development RTX 3070, a 64-world screening batch measured about 28,800
+world-steps/second while using roughly 0.7 host CPU core, versus about 3,700
+world-steps/second for the three-worker CPU sweep. GPU figures are screening
+throughput only; release claims still come from the CPU replays.
 Override settings from a terminal, for example:
 
 ```powershell

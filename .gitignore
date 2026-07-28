@@ -1,4 +1,5 @@
 __pycache__/
+.gpu-packages/
 *.pyc
 output/
 tmp/

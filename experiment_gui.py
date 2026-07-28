@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from broad_sweep import latin_hypercube
 from experiments import run_condition
+from gpu_sweep import screen_and_replay
 
 
 def numbers(text: str, cast=float) -> list:
@@ -36,6 +37,8 @@ class ExperimentApp(tk.Tk):
         self.total_jobs = 0
         self.completed_jobs = 0
         self.images: list[tk.PhotoImage] = []
+        self.gpu_report: dict | None = None
+        self.gpu_screen_total = 0
         self.fields: dict[str, tk.StringVar] = {}
         self._build()
 
@@ -46,6 +49,7 @@ class ExperimentApp(tk.Tk):
             ("Seeds", "1,2,3"), ("Steps", "200000"),
             ("Body yield", "0.30,0.40,0.50"), ("Decay", "0.02,0.03,0.04"),
             ("Sample every", "1000"), ("Workers", "3"), ("Broad configs", "256"),
+            ("GPU screen steps", "20000"), ("GPU batch", "64"), ("Replay top", "8"),
         ]
         for index, (label, default) in enumerate(specs):
             row, column = divmod(index, 3)
@@ -69,6 +73,8 @@ class ExperimentApp(tk.Tk):
         self.start_button.pack(side="left", padx=8)
         self.broad_button = ttk.Button(options, text="Broad sweep", command=lambda: self.start(broad=True))
         self.broad_button.pack(side="left")
+        self.gpu_button = ttk.Button(options, text="GPU screen + replay", command=self.start_gpu)
+        self.gpu_button.pack(side="left", padx=8)
         self.stop_button = ttk.Button(options, text="Stop", command=self.stop, state="disabled")
         self.stop_button.pack(side="left")
         ttk.Button(options, text="Export results", command=self.export).pack(side="left", padx=8)
@@ -150,6 +156,7 @@ class ExperimentApp(tk.Tk):
             messagebox.showerror("Invalid setup", str(error))
             return
         self.results.clear()
+        self.gpu_report = None
         self.table.delete(*self.table.get_children())
         for child in self.visual_inner.winfo_children():
             child.destroy()
@@ -164,10 +171,69 @@ class ExperimentApp(tk.Tk):
         self.progress.configure(maximum=self.total_jobs, value=0)
         self.start_button.configure(state="disabled")
         self.broad_button.configure(state="disabled")
+        self.gpu_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status.set(f"Running 0/{len(jobs)} — {workers} parallel workers — generating results")
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
         self.worker.start()
+
+    def start_gpu(self) -> None:
+        try:
+            config_count = int(self.fields["Broad configs"].get())
+            seeds = numbers(self.fields["Seeds"].get(), int)
+            screen_steps = int(self.fields["GPU screen steps"].get())
+            replay_steps = int(self.fields["Steps"].get())
+            sample_every = int(self.fields["Sample every"].get())
+            batch_size = int(self.fields["GPU batch"].get())
+            replay_top = min(int(self.fields["Replay top"].get()), config_count)
+            workers = max(1, int(self.fields["Workers"].get()))
+            if min(config_count, screen_steps, replay_steps, sample_every, batch_size, replay_top) < 1:
+                raise ValueError("GPU sweep values must be positive.")
+        except (TypeError, ValueError) as error:
+            messagebox.showerror("Invalid setup", str(error))
+            return
+        self.results.clear(); self.gpu_report = None; self.images.clear()
+        self.table.delete(*self.table.get_children())
+        for child in self.visual_inner.winfo_children():
+            child.destroy()
+        self.stop_event.clear()
+        self.gpu_screen_total = config_count * len(seeds)
+        self.total_jobs = self.gpu_screen_total + replay_top * len(seeds)
+        self.progress.configure(maximum=self.total_jobs, value=0)
+        self.start_button.configure(state="disabled"); self.broad_button.configure(state="disabled")
+        self.gpu_button.configure(state="disabled"); self.stop_button.configure(state="normal")
+        self.status.set(f"Preparing {self.gpu_screen_total} GPU screens")
+        configs = latin_hypercube(config_count, seed=7)
+        output = Path(__file__).with_name("Results") / "gpu-snapshots"
+        controls = {"reproduce": self.reproduce.get(), "mutate": self.mutate.get(),
+                    "recycle": self.recycle.get(), "spatial": self.spatial.get()}
+        self.worker = threading.Thread(target=self._run_gpu,
+            args=(configs, seeds, screen_steps, sample_every, batch_size, replay_top, replay_steps, workers, output, controls), daemon=True)
+        self.worker.start()
+
+    def _run_gpu(self, configs, seeds, screen_steps, sample_every, batch_size, replay_top, replay_steps, workers, output, controls) -> None:
+        try:
+            report = screen_and_replay(configs, seeds, screen_steps, sample_every, batch_size, replay_top,
+                                       replay_steps, workers, output, self.gpu_progress, self.stop_event.is_set, controls)
+            self.after(0, self.add_gpu_report, report)
+        except Exception as error:
+            self.after(0, self.gpu_failed, str(error))
+
+    def gpu_progress(self, stage: str, done: int, total: int, message: str) -> None:
+        value = done if stage == "gpu" else self.gpu_screen_total + done
+        self.after(0, lambda: (self.progress.configure(value=value),
+                               self.status.set(f"{message}: {done}/{total}")))
+
+    def add_gpu_report(self, report: dict) -> None:
+        self.gpu_report = report
+        self.results = report["replays"]
+        for result in self.results:
+            self.add_result(result, int(self.progress["value"]), self.total_jobs)
+        self.finished(self.total_jobs, self.total_jobs)
+
+    def gpu_failed(self, error: str) -> None:
+        self.finished(int(self.progress["value"]), self.total_jobs)
+        messagebox.showerror("GPU sweep failed", error)
 
     def _run(self, jobs: list[dict], workers: int) -> None:
         completed = 0
@@ -209,6 +275,7 @@ class ExperimentApp(tk.Tk):
     def finished(self, completed: int, total: int) -> None:
         self.start_button.configure(state="normal")
         self.broad_button.configure(state="normal")
+        self.gpu_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.progress.configure(value=completed)
         self.status.set("Stopped" if self.stop_event.is_set() else f"Finished — {completed}/{total} results generated")
@@ -223,7 +290,7 @@ class ExperimentApp(tk.Tk):
             return
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=(("JSON", "*.json"), ("All files", "*.*")))
         if path:
-            exportable = [{key: value for key, value in result.items() if not key.startswith("_")} for result in self.results]
+            exportable = self.gpu_report or [{key: value for key, value in result.items() if not key.startswith("_")} for result in self.results]
             Path(path).write_text(json.dumps(exportable, indent=2), encoding="utf-8")
             self.status.set(f"Saved {Path(path).name}")
 

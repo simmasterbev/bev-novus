@@ -79,15 +79,17 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
         world.resource[:] = world.resource.mean()
     baseline = world.total_mass
     census.update(world.components())
+    registered_births = 0
     for tick in range(steps):
-        prior, start = dict(census.current), len(world.births)
+        prior = dict(census.current)
         world.step()
         if tick % max(1, sample_every) == 0 or tick == steps - 1:
             census.update(world.components())
-            for birth in world.births[start:]:
-                if prior:
-                    birth.parent_id = min(prior, key=lambda ident: abs(prior[ident].trait - birth.parent_trait))
-                census.register_birth(birth, census.current)
+        for birth in world.births[registered_births:]:
+            if prior:
+                birth.parent_id = min(prior, key=lambda ident: abs(prior[ident].trait - birth.parent_trait))
+            census.register_birth(birth, census.current)
+        registered_births = len(world.births)
         world.assess_births(tick)
     eco, evo = ecology_metrics(world, census), evolvability_metrics(world, census)
     individual, collective = individuality_metrics(world, census), collective_metrics(world, census)
