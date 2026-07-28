@@ -17,6 +17,9 @@
     .parameter-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: .45rem 1rem; margin-top: .75rem; }
     .parameter-grid label { display: grid; grid-template-columns: 1fr auto; gap: .4rem; align-items: center; }
     .parameter-grid input[type="range"] { grid-column: 1 / -1; width: 100%; }
+    #patterns { border-top: 1px solid #3a4353; padding-top: .5rem; }
+    .pattern { padding: .35rem 0; border-bottom: 1px solid #252b36; }
+    .pattern strong { color: #8bd5ff; }
   </style>
 </head>
 <body>
@@ -62,6 +65,11 @@
   </details>
   <canvas id="world" width="96" height="72" aria-label="Bev Novus world: body matter is green, resource is blue, waste is red."></canvas>
   <canvas id="history" width="96" height="24" aria-label="History of body mass, structures, and births."></canvas>
+  <details open>
+    <summary>Pattern definitions <small>(heuristic morphology, not organism claims)</small></summary>
+    <div id="patterns">No qualifying body patterns yet.</div>
+    <p><strong>Seedlet</strong>: small compact body core. <strong>Oasis</strong>: body core inside an unusually resource-rich halo. <strong>Filament</strong>: elongated body geometry. <strong>Cluster</strong>: compact multi-cell body mass. <strong>Colony</strong>: large compact region.</p>
+  </details>
 
   <script>
     const height = 72, width = 96, cells = height * width;
@@ -75,8 +83,8 @@
     const reproduce = document.getElementById('reproduce'), recycle = document.getElementById('recycle'), spatial = document.getElementById('spatial'), mutate = document.getElementById('mutate');
     const ruleIds = ['resource-strength', 'body-strength', 'source-scale', 'metabolism', 'yield', 'decay', 'waste', 'recycle-rate', 'diffusion', 'steering', 'interval', 'fraction', 'mutation-scale', 'regrowth', 'capacity', 'waste-decay', 'waste-diffusion', 'dormancy-threshold', 'dormancy-cost'];
     let randomState = 1;
-    const history = document.getElementById('history'), historyContext = history.getContext('2d');
-    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog, faultTick = null, faultPhase = '';
+    const history = document.getElementById('history'), historyContext = history.getContext('2d'), patternsPanel = document.getElementById('patterns');
+    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog, currentPatterns = [], faultTick = null, faultPhase = '';
 
     function random() { randomState = (1664525 * randomState + 1013904223) >>> 0; return randomState / 4294967296; }
     function value(id) { return Number(document.getElementById(id).value); }
@@ -108,21 +116,34 @@
     function index(y, x) { return ((y + height) % height) * width + ((x + width) % width); }
     function mass() { return body.reduce((sum, v, i) => sum + v + resource[i] + waste[i], 0); }
     function numericalFault(phase, cell) { faultTick = tick; faultPhase = `${phase}${cell === undefined ? '' : ` at cell ${cell}`}`; running = false; pause.textContent = 'Start'; stats.value = `numerical fault at step ${faultTick}: ${faultPhase}`; return false; }
-    function structures() {
-      const peak = Math.max(...body); if (peak <= 0) return 0;
-      const cutoff = peak * .10, seen = new Uint8Array(cells); let count = 0;
+    function detectPatterns() {
+      const peak = Math.max(...body); if (peak <= 0) return [];
+      const cutoff = peak * .10, seen = new Uint8Array(cells), globalResource = resource.reduce((a, b) => a + b, 0) / cells;
+      const globalWaste = waste.reduce((a, b) => a + b, 0) / cells, found = [];
       for (let i = 0; i < cells; i++) if (body[i] >= cutoff && !seen[i]) {
-        const stack = [i]; let size = 0; seen[i] = 1;
+        const stack = [i], component = []; seen[i] = 1;
         while (stack.length) {
-          const cell = stack.pop(), y = Math.floor(cell / width), x = cell % width; size++;
-          [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dy, dx]) => {
-            const next = index(y + dy, x + dx); if (body[next] >= cutoff && !seen[next]) { seen[next] = 1; stack.push(next); }
-          });
+          const cell = stack.pop(); component.push(cell);
+          const y = Math.floor(cell / width), x = cell % width;
+          [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(([dy, dx]) => { const next = index(y + dy, x + dx); if (body[next] >= cutoff && !seen[next]) { seen[next] = 1; stack.push(next); } });
         }
-        if (size >= 2) count++;
+        if (component.length < 2) continue;
+        const ys = component.map(cell => Math.floor(cell / width)), xs = component.map(cell => cell % width);
+        const minY = Math.min(...ys), maxY = Math.max(...ys), minX = Math.min(...xs), maxX = Math.max(...xs), bbox = (maxY - minY + 1) * (maxX - minX + 1);
+        const bodyMass = component.reduce((sum, cell) => sum + body[cell], 0), resourceMean = component.reduce((sum, cell) => sum + resource[cell], 0) / component.length, wasteMean = component.reduce((sum, cell) => sum + waste[cell], 0) / component.length;
+        let haloResource = 0, haloCells = 0;
+        component.forEach(cell => { const y = Math.floor(cell / width), x = cell % width; for (let dy = -3; dy <= 3; dy++) for (let dx = -3; dx <= 3; dx++) { haloResource += resource[index(y + dy, x + dx)]; haloCells++; } });
+        const compactness = component.length / bbox, aspect = Math.max(maxY - minY + 1, maxX - minX + 1) / Math.max(1, Math.min(maxY - minY + 1, maxX - minX + 1)), resourceHalo = haloResource / haloCells;
+        let name = 'cluster';
+        if (component.length <= 8 && compactness >= .35) name = 'seedlet';
+        else if (resourceHalo > globalResource * 1.35 && resourceMean > globalResource * .8) name = 'oasis';
+        else if (aspect >= 3 && compactness < .45) name = 'filament';
+        else if (component.length >= 30 && compactness >= .35) name = 'colony';
+        found.push({ name, size: component.length, bodyMass, compactness, resourceHalo, wasteMean, aspect });
       }
-      return count;
+      return found.sort((a, b) => b.bodyMass - a.bodyMass);
     }
+    function structures() { return currentPatterns.length; }
     function gaussian(field, count, radiusMin, radiusMax, strength, radiusScale = 1) {
       for (let n = 0; n < count; n++) {
         const cy = random() * height, cx = random() * width;
@@ -203,7 +224,9 @@
         image.data[4 * i + 3] = 255;
       }
       context.putImageData(image, 0, 0);
-      historyLog.push([body.reduce((a, b) => a + b, 0), structures(), birthLog.length]);
+      currentPatterns = detectPatterns();
+      patternsPanel.innerHTML = currentPatterns.length ? currentPatterns.slice(0, 8).map((pattern, i) => `<div class="pattern"><strong>${pattern.name} ${i + 1}</strong> · ${pattern.size} cells · mass ${pattern.bodyMass.toFixed(2)} · compactness ${pattern.compactness.toFixed(2)} · resource halo ${pattern.resourceHalo.toFixed(3)} · waste ${pattern.wasteMean.toFixed(3)}</div>`).join('') : 'No qualifying body patterns yet.';
+      historyLog.push([body.reduce((a, b) => a + b, 0), currentPatterns.length, birthLog.length]);
       if (historyLog.length > 96) historyLog.shift();
       historyContext.clearRect(0, 0, 96, 24);
       historyContext.strokeStyle = '#77c66e'; historyContext.beginPath(); historyLog.forEach((row, i) => historyContext.lineTo(i, 24 - Math.min(23, row[0] / 100))); historyContext.stroke();
