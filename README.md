@@ -74,7 +74,8 @@ Run `python experiment_gui.py` to open a small Tkinter tool. Enter comma-separat
 values for seeds, body yield, and decay; choose the step count and worker count;
 then run the Cartesian product. Results appear as each run finishes and can be
 exported as JSON. The default grid matches the recent 200k-step persistence test.
-On Windows, double-click `run_experiment_gui.bat` to launch it.
+On Windows, double-click `run_experiment_gui.bat` to launch it; it uses the bundled
+runtime when available so NumPy is found automatically.
 
 ## Roadmap and 2.0 audit
 
