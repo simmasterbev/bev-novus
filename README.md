@@ -44,6 +44,10 @@ The run prints mass drift and writes frames to `output/`. Most image viewers can
 
 Open `viewer.html` in a modern browser. It runs the three-field world continuously; green is body matter, blue resource, and red waste. It reports observed structures and autonomous birth/viability events. Expand “World rules and starting configuration” to tune the rules; use “Apply starting world” after changing seed or patch settings. The panel includes the “High-Flux Oasis” preset and JSON config export/import.
 
+The viewer selects a WebGPU compute engine when the browser and graphics driver
+support it, with the original JavaScript engine as an automatic fallback. The
+engine selector and live steps/second counter make the active path visible.
+
 For a reproducible custom run:
 
 ```powershell

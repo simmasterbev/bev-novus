@@ -33,7 +33,9 @@
     <label><input id="spatial" type="checkbox" checked> Spatial resources</label>
     <label><input id="mutate" type="checkbox" checked> Mutation</label>
     <label>Resolution <select id="resolution"><option value="96x72">96 × 72</option><option value="144x108">144 × 108</option><option value="192x144">192 × 144</option></select></label>
-    <label>Steps / frame <input id="speed" type="range" min="1" max="30" value="6"><output id="speed-value">6</output></label>
+    <label>Engine <select id="backend"><option value="webgpu">WebGPU</option><option value="javascript">JavaScript</option></select></label>
+    <label>Steps / frame <input id="speed" type="range" min="1" max="500" value="30"><output id="speed-value">30</output></label>
+    <output id="performance">initializing engine</output>
     <output id="stats" aria-live="polite"></output>
   </div>
   <details open>
@@ -82,12 +84,52 @@
     const pause = document.getElementById('pause');
     const speed = document.getElementById('speed');
     const speedValue = document.getElementById('speed-value');
+    const backendControl = document.getElementById('backend'), performanceOutput = document.getElementById('performance');
     const stats = document.getElementById('stats');
     const reproduce = document.getElementById('reproduce'), recycle = document.getElementById('recycle'), spatial = document.getElementById('spatial'), mutate = document.getElementById('mutate');
     const ruleIds = ['resource-strength', 'body-strength', 'source-scale', 'metabolism', 'yield', 'decay', 'waste', 'recycle-rate', 'diffusion', 'steering', 'interval', 'fraction', 'mutation-scale', 'regrowth', 'capacity', 'waste-decay', 'waste-diffusion', 'dormancy-threshold', 'dormancy-cost', 'complexity'];
     let randomState = 1;
     const history = document.getElementById('history'), historyContext = history.getContext('2d'), patternsPanel = document.getElementById('patterns');
-    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog, currentPatterns = [], previousPatterns = [], nextPatternId = 1, patternTracks = new Map(), patternEvents = [], trackedTick = -1, faultTick = null, faultPhase = '';
+    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog, currentPatterns = [], previousPatterns = [], nextPatternId = 1, patternTracks = new Map(), patternEvents = [], trackedTick = -1, faultTick = null, faultPhase = '', frameBusy = false, measuredSteps = 0;
+    const gpu = { enabled: false, device: null, current: 0, buffers: [], advanceGroups: [], diffuseGroups: [] };
+    const gpuShader = `
+      struct Cell { body: f32, resource: f32, waste: f32, trait: f32, mutation: f32, source: f32, environment: f32, padding: f32 }
+      @group(0) @binding(0) var<storage, read> input: array<Cell>;
+      @group(0) @binding(1) var<storage, read_write> output: array<Cell>;
+      @group(0) @binding(2) var<storage, read> params: array<f32>;
+      fn wrap(value: i32, size: i32) -> i32 { return ((value % size) + size) % size; }
+      fn cellIndex(y: i32, x: i32) -> u32 { return u32(wrap(y, i32(params[1])) * i32(params[0]) + wrap(x, i32(params[0]))); }
+      fn neighborBody(y: i32, x: i32) -> f32 { return (input[cellIndex(y-1,x)].body + input[cellIndex(y+1,x)].body + input[cellIndex(y,x-1)].body + input[cellIndex(y,x+1)].body) * .25; }
+      fn affinity(y: i32, x: i32) -> f32 { let i=cellIndex(y,x); let n=neighborBody(y,x); return (input[i].body + 4.0*n)*.2 + params[15]*n + .35*input[i].resource - params[5]*input[i].waste; }
+      fn transportWeight(y: i32, x: i32, selected: u32) -> f32 {
+        let center=affinity(y,x); let steering=params[8];
+        var scores=array<f32,5>(0.0, steering*(affinity(y+1,x)-center), steering*(affinity(y-1,x)-center), steering*(affinity(y,x+1)-center), steering*(affinity(y,x-1)-center));
+        var peak=scores[0]; for (var k=1u;k<5u;k++){ peak=max(peak,scores[k]); }
+        var logits: array<f32,5>; var total=0.0;
+        for (var k=0u;k<5u;k++){ logits[k]=exp(max(-60.0,scores[k]-peak)); total+=logits[k]; }
+        return (1.0-params[7])*logits[selected]/total + params[7]*.2;
+      }
+      @compute @workgroup_size(256)
+      fn advance(@builtin(global_invocation_id) id: vec3<u32>) {
+        let count=u32(params[0]*params[1]); if(id.x>=count){return;}
+        let y=i32(id.x/u32(params[0])); let x=i32(id.x%u32(params[0]));
+        var ys=array<i32,5>(y,y-1,y+1,y,y); var xs=array<i32,5>(x,x,x,x-1,x+1);
+        var movedBody=0.0; var movedTrait=0.0; var movedMutation=0.0;
+        for(var direction=0u;direction<5u;direction++){ let sourceIndex=cellIndex(ys[direction],xs[direction]); let share=transportWeight(ys[direction],xs[direction],direction); movedBody+=input[sourceIndex].body*share; movedTrait+=input[sourceIndex].trait*share; movedMutation+=input[sourceIndex].mutation*share; }
+        let old=input[id.x]; let traitValue=select(.5,movedTrait/max(movedBody,1e-12),movedBody>1e-12); let mutationValue=select(.04,movedMutation/max(movedBody,1e-12),movedBody>1e-12);
+        let connected=neighborBody(y,x)/max(movedBody+neighborBody(y,x),1e-12); let intake=min(old.resource,params[2]*(.5+traitValue)*movedBody*old.resource*(1.0+params[15]*connected)); let growth=params[3]*intake;
+        var resourceValue=old.resource-intake; var bodyValue=movedBody+growth; var traitMass=movedTrait+traitValue*growth; var mutationMass=movedMutation+mutationValue*growth; var wasteValue=old.waste+(1.0-params[3])*intake;
+        let decay=params[4]*bodyValue*select(1.0,params[14],bodyValue<params[13]); bodyValue-=decay; traitMass-=traitValue*decay; mutationMass-=mutationValue*decay; wasteValue+=decay;
+        let regrown=params[9]*old.source*max(0.0,params[10]-resourceValue); let cleaned=params[11]*wasteValue; resourceValue+=regrown; wasteValue-=cleaned;
+        if(params[16]>.5){ let recovered=min(wasteValue,params[6]*old.source*wasteValue); wasteValue-=recovered; resourceValue+=recovered; }
+        output[id.x]=Cell(bodyValue,resourceValue,wasteValue,traitMass,mutationMass,old.source,old.environment+regrown-cleaned,0.0);
+      }
+      @compute @workgroup_size(256)
+      fn diffuse(@builtin(global_invocation_id) id: vec3<u32>) {
+        let count=u32(params[0]*params[1]); if(id.x>=count){return;} let y=i32(id.x/u32(params[0])); let x=i32(id.x%u32(params[0])); let old=input[id.x];
+        let mixed=(old.waste+input[cellIndex(y-1,x)].waste+input[cellIndex(y+1,x)].waste+input[cellIndex(y,x-1)].waste+input[cellIndex(y,x+1)].waste)*.2;
+        output[id.x]=Cell(old.body,old.resource,(1.0-params[12])*old.waste+params[12]*mixed,old.trait,old.mutation,old.source,old.environment,0.0);
+      }`;
 
     function random() { randomState = (1664525 * randomState + 1013904223) >>> 0; return randomState / 4294967296; }
     function value(id) { return Number(document.getElementById(id).value); }
@@ -181,13 +223,91 @@
         }
       }
     }
+    function gpuStateArray() {
+      const state = new Float32Array(cells * 8), environmentPerCell = environmentDelta / cells;
+      for (let i = 0; i < cells; i++) state.set([body[i], resource[i], waste[i], traitMass[i], mutationMass[i], source[i], environmentPerCell, 0], i * 8);
+      return state;
+    }
+    function writeGpuParams() {
+      const config = settings(), params = new Float32Array(32);
+      params.set([width, height, config.metabolism, config.bodyYield, config.decay, config.waste, config.recycleRate,
+        config.diffusion, config.steering, config.regrowth, config.capacity, config.wasteDecay, config.wasteDiffusion,
+        config.dormancyThreshold, config.dormancyCost, config.complexity, recycle.checked ? 1 : 0]);
+      gpu.device.queue.writeBuffer(gpu.params, 0, params);
+    }
+    function createGpuResources() {
+      if (!gpu.device) return;
+      (gpu.allBuffers || []).forEach(buffer => buffer.destroy());
+      const bytes = cells * 32, storage = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+      gpu.buffers = [gpu.device.createBuffer({ size: bytes, usage: storage }), gpu.device.createBuffer({ size: bytes, usage: storage })];
+      gpu.intermediate = gpu.device.createBuffer({ size: bytes, usage: storage });
+      gpu.readback = gpu.device.createBuffer({ size: bytes, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      gpu.params = gpu.device.createBuffer({ size: 128, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      gpu.allBuffers = [...gpu.buffers, gpu.intermediate, gpu.readback, gpu.params]; gpu.current = 0;
+      gpu.advanceGroups = [0, 1].map(current => gpu.device.createBindGroup({ layout: gpu.advancePipeline.getBindGroupLayout(0), entries: [
+        { binding: 0, resource: { buffer: gpu.buffers[current] } }, { binding: 1, resource: { buffer: gpu.intermediate } }, { binding: 2, resource: { buffer: gpu.params } }] }));
+      gpu.diffuseGroups = [0, 1].map(current => gpu.device.createBindGroup({ layout: gpu.diffusePipeline.getBindGroupLayout(0), entries: [
+        { binding: 0, resource: { buffer: gpu.intermediate } }, { binding: 1, resource: { buffer: gpu.buffers[1 - current] } }, { binding: 2, resource: { buffer: gpu.params } }] }));
+      writeGpuParams();
+    }
+    function uploadGpuState() { if (gpu.enabled) gpu.device.queue.writeBuffer(gpu.buffers[gpu.current], 0, gpuStateArray()); }
+    async function syncGpuState(correctMass = true) {
+      const encoder = gpu.device.createCommandEncoder(); encoder.copyBufferToBuffer(gpu.buffers[gpu.current], 0, gpu.readback, 0, cells * 32); gpu.device.queue.submit([encoder.finish()]);
+      await gpu.readback.mapAsync(GPUMapMode.READ); const state = new Float32Array(gpu.readback.getMappedRange().slice(0)); gpu.readback.unmap();
+      body = new Float32Array(cells); resource = new Float32Array(cells); waste = new Float32Array(cells); traitMass = new Float32Array(cells); mutationMass = new Float32Array(cells); source = new Float32Array(cells); environmentDelta = 0;
+      for (let i = 0; i < cells; i++) { const offset = i * 8; body[i] = state[offset]; resource[i] = state[offset + 1]; waste[i] = state[offset + 2]; traitMass[i] = state[offset + 3]; mutationMass[i] = state[offset + 4]; source[i] = state[offset + 5]; environmentDelta += state[offset + 6]; if (![body[i], resource[i], waste[i], traitMass[i], mutationMass[i]].every(Number.isFinite)) return numericalFault('WebGPU field', i); }
+      if (correctMass) {
+        const drift = mass() - initialMass - environmentDelta;
+        if (Math.abs(drift) > 1e-7) {
+          if (drift < 0) { const addition = -drift / cells; for (let i = 0; i < cells; i++) resource[i] += addition; }
+          else { const available = resource.reduce((sum, amount) => sum + Math.max(0, amount), 0), scale = available > 0 ? Math.max(0, 1 - drift / available) : 1; for (let i = 0; i < cells; i++) resource[i] = Math.max(0, resource[i]) * scale; }
+          uploadGpuState();
+        }
+      }
+    }
+    function dispatchGpuSteps(count) {
+      writeGpuParams(); const encoder = gpu.device.createCommandEncoder();
+      for (let n = 0; n < count; n++) {
+        let pass = encoder.beginComputePass(); pass.setPipeline(gpu.advancePipeline); pass.setBindGroup(0, gpu.advanceGroups[gpu.current]); pass.dispatchWorkgroups(Math.ceil(cells / 256)); pass.end();
+        pass = encoder.beginComputePass(); pass.setPipeline(gpu.diffusePipeline); pass.setBindGroup(0, gpu.diffuseGroups[gpu.current]); pass.dispatchWorkgroups(Math.ceil(cells / 256)); pass.end(); gpu.current = 1 - gpu.current;
+      }
+      gpu.device.queue.submit([encoder.finish()]);
+    }
+    function assessBirths() { for (const birth of birthLog) if (!birth.viable && tick - birth.tick >= 30) { let local = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) local += body[index(birth.y + dy, birth.x + dx)]; birth.viable = local >= .4; } }
+    async function gpuAdvanceSteps(count) {
+      let remaining = count;
+      while (remaining > 0 && faultTick === null) {
+        const interval = settings().interval, untilBirth = reproduce.checked ? interval - (tick % interval) : remaining, chunk = Math.min(remaining, untilBirth);
+        dispatchGpuSteps(chunk); tick += chunk; remaining -= chunk; await syncGpuState();
+        if (faultTick !== null) break;
+        if (reproduce.checked && tick % interval === 0) { bud(); uploadGpuState(); }
+        assessBirths();
+      }
+    }
+    async function initWebGPU() {
+      if (!navigator.gpu) throw new Error('WebGPU is unavailable in this browser');
+      const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' }); if (!adapter) throw new Error('No WebGPU adapter found');
+      gpu.device = await adapter.requestDevice(); const module = gpu.device.createShaderModule({ code: gpuShader });
+      const shaderErrors = (await module.getCompilationInfo()).messages.filter(message => message.type === 'error');
+      if (shaderErrors.length) throw new Error(`WebGPU shader: ${shaderErrors[0].message}`);
+      gpu.advancePipeline = await gpu.device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'advance' } });
+      gpu.diffusePipeline = await gpu.device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'diffuse' } });
+      gpu.enabled = true; createGpuResources(); uploadGpuState(); speed.max = 500; performanceOutput.value = 'WebGPU ready';
+      gpu.device.lost.then(() => { gpu.enabled = false; backendControl.value = 'javascript'; speed.max = 30; performanceOutput.value = 'GPU lost · JavaScript fallback'; });
+    }
+    async function selectBackend() {
+      if (backendControl.value === 'javascript') { gpu.enabled = false; speed.max = 30; if (+speed.value > 30) speed.value = 30; speedValue.value = speed.value; performanceOutput.value = 'JavaScript engine'; return; }
+      try { if (!gpu.device) await initWebGPU(); else { gpu.enabled = true; createGpuResources(); uploadGpuState(); speed.max = 500; } }
+      catch (error) { gpu.enabled = false; backendControl.value = 'javascript'; speed.max = 30; if (+speed.value > 30) speed.value = 30; speedValue.value = speed.value; performanceOutput.value = `${error.message} · JavaScript fallback`; }
+    }
+    async function advanceSimulation(count) { if (gpu.enabled) await gpuAdvanceSteps(count); else for (let i = 0; i < count; i++) step(); }
     function reset() {
       const config = settings(); randomState = (value('world-seed') >>> 0) || 1;
       body = new Float64Array(cells); resource = new Float64Array(cells); waste = new Float64Array(cells); traitMass = new Float64Array(cells); mutationMass = new Float64Array(cells); source = new Float64Array(cells); birthLog = []; historyLog = []; currentPatterns = []; previousPatterns = []; nextPatternId = 1; patternTracks = new Map(); patternEvents = []; trackedTick = -1;
       gaussian(resource, value('resource-patches'), 6, 16, config.resourceStrength); gaussian(source, value('resource-patches'), 6, 16, config.resourceStrength, config.sourceScale); gaussian(body, value('body-patches'), 2, 5, config.bodyStrength);
       if (!spatial.checked) resource.fill(resource.reduce((a, b) => a + b, 0) / cells);
       for (let i = 0; i < cells; i++) { traitMass[i] = body[i] * (.35 + .3 * random()); mutationMass[i] = body[i] * (.02 + .06 * random()); }
-      tick = 0; faultTick = null; faultPhase = ''; running = true; pause.textContent = 'Pause'; environmentDelta = 0; initialMass = mass(); draw();
+      tick = 0; faultTick = null; faultPhase = ''; running = true; pause.textContent = 'Pause'; environmentDelta = 0; initialMass = mass(); if (gpu.enabled) { createGpuResources(); uploadGpuState(); } draw();
     }
     function step() {
       if (faultTick !== null) return;
@@ -224,10 +344,7 @@
       if (config.wasteDiffusion > 0) { const mixed = new Float64Array(cells); for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) { const i = index(y, x); mixed[i] = (waste[i] + waste[index(y - 1, x)] + waste[index(y + 1, x)] + waste[index(y, x - 1)] + waste[index(y, x + 1)]) / 5; } for (let i = 0; i < cells; i++) { waste[i] = (1 - config.wasteDiffusion) * waste[i] + config.wasteDiffusion * mixed[i]; if (!Number.isFinite(waste[i])) return numericalFault('waste diffusion', i); } }
       tick++;
       if (reproduce.checked && tick % config.interval === 0) bud();
-      for (const birth of birthLog) if (!birth.viable && tick - birth.tick >= 30) {
-        let local = 0; for (let dy = -2; dy <= 2; dy++) for (let dx = -2; dx <= 2; dx++) local += body[index(birth.y + dy, birth.x + dx)];
-        birth.viable = local >= .4;
-      }
+      assessBirths();
     }
     function bud() {
       const source = body.reduce((best, value, i) => value > body[best] ? i : best, 0), y = Math.floor(source / width), x = source % width;
@@ -260,11 +377,25 @@
       historyContext.strokeStyle = '#77c66e'; historyContext.beginPath(); historyLog.forEach((row, i) => historyContext.lineTo(i, 24 - Math.min(23, row[0] / 100))); historyContext.stroke();
       historyContext.strokeStyle = '#73a7ff'; historyContext.beginPath(); historyLog.forEach((row, i) => historyContext.lineTo(i, 24 - Math.min(23, row[1] * 8))); historyContext.stroke();
       const viable = birthLog.filter(birth => birth.viable).length;
-      stats.value = `step ${tick} · structures ${structures()} · births ${birthLog.length}/${viable} viable · balance ${(mass() - initialMass - environmentDelta).toExponential(2)}`;
+      stats.value = `step ${tick} · structures ${structures()} · births ${birthLog.length}/${viable} viable · balance ${(mass() - initialMass - environmentDelta).toExponential(2)} · ${gpu.enabled ? 'WebGPU' : 'JavaScript'}`;
     }
-    function animate() { if (running) for (let i = 0; i < +speed.value; i++) step(); draw(); requestAnimationFrame(animate); }
+    async function animate() {
+      if (!frameBusy) {
+        frameBusy = true; const before = tick, started = window.performance.now();
+        try {
+          if (running) await advanceSimulation(+speed.value);
+          draw(); const elapsed = Math.max(window.performance.now() - started, .01), rate = (tick - before) * 1000 / elapsed;
+          if (tick > before) measuredSteps = measuredSteps ? measuredSteps * .8 + rate * .2 : rate;
+          performanceOutput.value = `${gpu.enabled ? 'WebGPU' : 'JavaScript'} · ${Math.round(measuredSteps)} steps/s`;
+        } catch (error) {
+          gpu.enabled = false; backendControl.value = 'javascript'; speed.max = 30; running = false; pause.textContent = 'Start';
+          performanceOutput.value = `WebGPU stopped · ${error.message}`;
+        } finally { frameBusy = false; }
+      }
+      requestAnimationFrame(animate);
+    }
     pause.onclick = () => { running = !running; pause.textContent = running ? 'Pause' : 'Start'; };
-    document.getElementById('step').onclick = () => { step(); draw(); };
+    document.getElementById('step').onclick = async () => { if (!frameBusy) { frameBusy = true; await advanceSimulation(1); draw(); frameBusy = false; } };
     document.getElementById('reset').onclick = reset;
     speed.oninput = () => { speedValue.value = speed.value; };
     function refreshParameterLabels() {
@@ -272,6 +403,7 @@
     }
     ruleIds.forEach(id => document.getElementById(id).oninput = refreshParameterLabels);
     document.getElementById('resolution').onchange = () => { applyResolution(); reset(); };
+    backendControl.onchange = selectBackend;
     document.getElementById('apply-config').onclick = reset;
     document.getElementById('high-flux').onclick = loadHighFlux;
     document.getElementById('export-config').onclick = () => {
@@ -283,7 +415,7 @@
       const reader = new FileReader(); reader.onload = () => { try { applySnapshot(JSON.parse(reader.result)); } catch (error) { stats.value = `config error: ${error.message}`; } }; reader.readAsText(file);
     };
     refreshParameterLabels();
-    reset(); animate();
+    reset(); selectBackend().finally(animate);
   </script>
 </body>
 </html>
