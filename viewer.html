@@ -33,7 +33,7 @@
     <label><input id="spatial" type="checkbox" checked> Spatial resources</label>
     <label><input id="mutate" type="checkbox" checked> Mutation</label>
     <label>Resolution <select id="resolution"><option value="96x72">96 × 72</option><option value="144x108">144 × 108</option><option value="192x144">192 × 144</option></select></label>
-    <label>Engine <select id="backend"><option value="webgpu">WebGPU</option><option value="javascript">JavaScript</option></select></label>
+    <label>Engine <select id="backend"><option value="webgpu">WebGPU field</option><option value="javascript">JavaScript field</option><option value="particles">Particle hybrid</option></select></label>
     <label>Steps / frame <input id="speed" type="range" min="1" max="500" value="30"><output id="speed-value">30</output></label>
     <output id="performance" aria-live="polite">initializing engine</output>
     <output id="stats" aria-live="polite"></output>
@@ -90,7 +90,7 @@
     const ruleIds = ['resource-strength', 'body-strength', 'source-scale', 'metabolism', 'yield', 'decay', 'waste', 'recycle-rate', 'diffusion', 'steering', 'interval', 'fraction', 'mutation-scale', 'regrowth', 'capacity', 'waste-decay', 'waste-diffusion', 'dormancy-threshold', 'dormancy-cost', 'complexity'];
     let randomState = 1;
     const history = document.getElementById('history'), historyContext = history.getContext('2d'), patternsPanel = document.getElementById('patterns');
-    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog, currentPatterns = [], previousPatterns = [], nextPatternId = 1, patternTracks = new Map(), patternEvents = [], trackedTick = -1, faultTick = null, faultPhase = '', frameBusy = false, measuredSteps = 0, engineNote = '';
+    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog, currentPatterns = [], previousPatterns = [], nextPatternId = 1, patternTracks = new Map(), patternEvents = [], trackedTick = -1, faultTick = null, faultPhase = '', frameBusy = false, measuredSteps = 0, engineNote = '', particleMode = false, particlePositions, particleMasses, particleVelocities;
     const gpu = { enabled: false, device: null, current: 0, buffers: [], advanceGroups: [], diffuseGroups: [] };
     const gpuShader = `
       struct Cell {
@@ -171,6 +171,7 @@
     function index(y, x) { return ((y + height) % height) * width + ((x + width) % width); }
     function mass() { return body.reduce((sum, v, i) => sum + v + resource[i] + waste[i], 0); }
     function numericalFault(phase, cell) { faultTick = tick; faultPhase = `${phase}${cell === undefined ? '' : ` at cell ${cell}`}`; running = false; pause.textContent = 'Start'; stats.value = `numerical fault at step ${faultTick}: ${faultPhase}`; return false; }
+    function engineLabel() { return particleMode ? 'Particle hybrid' : gpu.enabled ? 'WebGPU field' : 'JavaScript field'; }
     function detectPatterns() {
       const peak = Math.max(...body); if (peak <= 0) return [];
       const cutoff = peak * .10, seen = new Uint8Array(cells), globalResource = resource.reduce((a, b) => a + b, 0) / cells;
@@ -304,8 +305,46 @@
       gpu.enabled = true; engineNote = ''; createGpuResources(); uploadGpuState(); speed.max = 500; performanceOutput.value = 'WebGPU ready';
       gpu.device.lost.then(() => { gpu.enabled = false; engineNote = 'GPU device lost'; backendControl.value = 'javascript'; speed.max = 30; performanceOutput.value = 'JavaScript fallback · GPU device lost'; });
     }
+    function particleBins() {
+      const size = 6, columns = Math.max(1, Math.floor(width / size)), rows = Math.max(1, Math.floor(height / size)), bins = new Map();
+      particlePositions.forEach((position, particle) => { const key = `${Math.floor(position[0] / size) % rows},${Math.floor(position[1] / size) % columns}`; if (!bins.has(key)) bins.set(key, []); bins.get(key).push(particle); });
+      return { bins, size, columns, rows };
+    }
+    function particleNeighbors(particle, grid) {
+      const [y, x] = particlePositions[particle], row = Math.floor(y / grid.size) % grid.rows, column = Math.floor(x / grid.size) % grid.columns, neighbors = new Set();
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) (grid.bins.get(`${(row + dy + grid.rows) % grid.rows},${(column + dx + grid.columns) % grid.columns}`) || []).forEach(index => { if (index !== particle) neighbors.add(index); });
+      return neighbors;
+    }
+    function particleForceField() {
+      const config = settings(), count = particlePositions.length, forces = Array.from({ length: count }, () => [0, 0]), grid = particleBins(), radius = 6, repulsionRadius = 1.5;
+      const resourceY = new Float64Array(cells), resourceX = new Float64Array(cells), wasteY = new Float64Array(cells), wasteX = new Float64Array(cells);
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) { const i = index(y, x); resourceY[i] = (resource[index(y + 1, x)] - resource[index(y - 1, x)]) / 2; resourceX[i] = (resource[index(y, x + 1)] - resource[index(y, x - 1)]) / 2; wasteY[i] = (waste[index(y + 1, x)] - waste[index(y - 1, x)]) / 2; wasteX[i] = (waste[index(y, x + 1)] - waste[index(y, x - 1)]) / 2; }
+      particlePositions.forEach((position, particle) => {
+        const cell = index(Math.round(position[0]), Math.round(position[1])); forces[particle][0] += .15 * config.steering * resourceY[cell] - config.waste * .15 * wasteY[cell]; forces[particle][1] += .15 * config.steering * resourceX[cell] - config.waste * .15 * wasteX[cell];
+        particleNeighbors(particle, grid).forEach(neighbor => { let dy = particlePositions[neighbor][0] - position[0], dx = particlePositions[neighbor][1] - position[1]; if (dy > height / 2) dy -= height; if (dy < -height / 2) dy += height; if (dx > width / 2) dx -= width; if (dx < -width / 2) dx += width; const distance = Math.hypot(dy, dx); if (distance <= 1e-9 || distance >= radius) return; const magnitude = distance < repulsionRadius ? -2 * (1 - distance / repulsionRadius) : .8 * (1 - distance / radius); forces[particle][0] += magnitude * dy / distance; forces[particle][1] += magnitude * dx / distance; });
+      });
+      return forces;
+    }
+    function rasterizeParticles() { body.fill(0); traitMass.fill(0); mutationMass.fill(0); particlePositions.forEach((position, particle) => { const cell = index(Math.round(position[0]), Math.round(position[1])); body[cell] += particleMasses[particle]; traitMass[cell] += particleMasses[particle] * .5; mutationMass[cell] += particleMasses[particle] * .04; }); }
+    function particleStep() {
+      if (faultTick !== null) return;
+      const config = settings(), forces = particleForceField();
+      particlePositions.forEach((position, particle) => { particleVelocities[particle][0] = forces[particle][0] / Math.max(particleMasses[particle], 1e-9); particleVelocities[particle][1] = forces[particle][1] / Math.max(particleMasses[particle], 1e-9); position[0] = (position[0] + .1 * particleVelocities[particle][0] + height) % height; position[1] = (position[1] + .1 * particleVelocities[particle][1] + width) % width; });
+      const occupied = new Map(); particlePositions.forEach((position, particle) => { const cell = index(Math.round(position[0]), Math.round(position[1])); if (!occupied.has(cell)) occupied.set(cell, []); occupied.get(cell).push(particle); });
+      let regrownTotal = 0; resource = resource.map((amount, cell) => { const regrown = config.regrowth * source[cell] * Math.max(0, config.capacity - amount); regrownTotal += regrown; return amount + regrown; });
+      occupied.forEach((particles, cell) => particles.forEach(particle => { const intake = Math.min(resource[cell], config.metabolism * particleMasses[particle] * Math.max(resource[cell], 0)); resource[cell] -= intake; particleMasses[particle] += config.bodyYield * intake; waste[cell] += (1 - config.bodyYield) * intake; }));
+      particleMasses.forEach((massValue, particle) => { const cell = index(Math.round(particlePositions[particle][0]), Math.round(particlePositions[particle][1])), decay = config.decay * massValue; particleMasses[particle] = Math.max(0, massValue - decay); waste[cell] += decay; });
+      if (config.wasteDiffusion > 0) { const mixed = new Float64Array(cells); for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) { const cell = index(y, x); mixed[cell] = (waste[cell] + waste[index(y - 1, x)] + waste[index(y + 1, x)] + waste[index(y, x - 1)] + waste[index(y, x + 1)]) / 5; } for (let cell = 0; cell < cells; cell++) waste[cell] = (1 - config.wasteDiffusion) * waste[cell] + config.wasteDiffusion * mixed[cell]; }
+      if (recycle.checked) for (let cell = 0; cell < cells; cell++) { const recovered = Math.min(waste[cell], config.recycleRate * source[cell] * waste[cell]); waste[cell] -= recovered; resource[cell] += recovered; }
+      environmentDelta += regrownTotal; tick++; rasterizeParticles(); assessBirths();
+      if (![...particlePositions.flat(), ...particleMasses, ...resource, ...waste].every(Number.isFinite)) numericalFault('particle hybrid');
+    }
     async function selectBackend() {
+      if (backendControl.value === 'particles') { gpu.enabled = false; particleMode = true; engineNote = 'reproduction pending in particle prototype'; speed.max = 120; if (+speed.value > 120) speed.value = 120; speedValue.value = speed.value; reset(); performanceOutput.value = 'Particle hybrid ready'; return; }
+      particleMode = false;
+      if (backendControl.value === 'javascript') reset();
       if (backendControl.value === 'javascript') { gpu.enabled = false; engineNote = navigator.gpu ? '' : 'WebGPU unavailable in this browser'; speed.max = 30; if (+speed.value > 30) speed.value = 30; speedValue.value = speed.value; performanceOutput.value = `JavaScript engine${engineNote ? ` · ${engineNote}` : ''}`; return; }
+      reset();
       try { if (!gpu.device) await initWebGPU(); else { gpu.enabled = true; createGpuResources(); uploadGpuState(); speed.max = 500; } }
       catch (error) {
         gpu.enabled = false; engineNote = error.message; backendControl.value = 'javascript'; speed.max = 30;
@@ -313,11 +352,20 @@
         if (+speed.value > 30) speed.value = 30; speedValue.value = speed.value; performanceOutput.value = `JavaScript fallback · ${engineNote}`;
       }
     }
-    async function advanceSimulation(count) { if (gpu.enabled) await gpuAdvanceSteps(count); else for (let i = 0; i < count; i++) step(); }
+    async function advanceSimulation(count) { if (particleMode) for (let i = 0; i < count; i++) particleStep(); else if (gpu.enabled) await gpuAdvanceSteps(count); else for (let i = 0; i < count; i++) step(); }
     function reset() {
       const config = settings(); randomState = (value('world-seed') >>> 0) || 1;
       body = new Float64Array(cells); resource = new Float64Array(cells); waste = new Float64Array(cells); traitMass = new Float64Array(cells); mutationMass = new Float64Array(cells); source = new Float64Array(cells); birthLog = []; historyLog = []; currentPatterns = []; previousPatterns = []; nextPatternId = 1; patternTracks = new Map(); patternEvents = []; trackedTick = -1;
-      gaussian(resource, value('resource-patches'), 6, 16, config.resourceStrength); gaussian(source, value('resource-patches'), 6, 16, config.resourceStrength, config.sourceScale); gaussian(body, value('body-patches'), 2, 5, config.bodyStrength);
+      gaussian(resource, value('resource-patches'), 6, 16, config.resourceStrength); gaussian(source, value('resource-patches'), 6, 16, config.resourceStrength, config.sourceScale);
+      if (particleMode) {
+        particlePositions = []; const particleCount = Math.max(16, value('body-patches') * 12);
+        for (let patch = 0; patch < value('body-patches'); patch++) { const centerY = random() * height, centerX = random() * width; for (let particle = 0; particle < 12; particle++) particlePositions.push([(centerY + (random() - .5) * 6 + height) % height, (centerX + (random() - .5) * 6 + width) % width]); }
+        while (particlePositions.length < particleCount) particlePositions.push([random() * height, random() * width]);
+        particleMasses = particlePositions.map(() => Math.max(.05, config.bodyStrength / 2)); particleVelocities = particlePositions.map(() => [0, 0]);
+        if (!spatial.checked) resource.fill(resource.reduce((a, b) => a + b, 0) / cells);
+        rasterizeParticles(); tick = 0; faultTick = null; faultPhase = ''; running = true; pause.textContent = 'Pause'; environmentDelta = 0; initialMass = mass(); draw(); return;
+      }
+      gaussian(body, value('body-patches'), 2, 5, config.bodyStrength);
       if (!spatial.checked) resource.fill(resource.reduce((a, b) => a + b, 0) / cells);
       for (let i = 0; i < cells; i++) { traitMass[i] = body[i] * (.35 + .3 * random()); mutationMass[i] = body[i] * (.02 + .06 * random()); }
       tick = 0; faultTick = null; faultPhase = ''; running = true; pause.textContent = 'Pause'; environmentDelta = 0; initialMass = mass(); if (gpu.enabled) { createGpuResources(); uploadGpuState(); } draw();
@@ -390,7 +438,7 @@
       historyContext.strokeStyle = '#77c66e'; historyContext.beginPath(); historyLog.forEach((row, i) => historyContext.lineTo(i, 24 - Math.min(23, row[0] / 100))); historyContext.stroke();
       historyContext.strokeStyle = '#73a7ff'; historyContext.beginPath(); historyLog.forEach((row, i) => historyContext.lineTo(i, 24 - Math.min(23, row[1] * 8))); historyContext.stroke();
       const viable = birthLog.filter(birth => birth.viable).length;
-      stats.value = `step ${tick} · structures ${structures()} · births ${birthLog.length}/${viable} viable · balance ${(mass() - initialMass - environmentDelta).toExponential(2)} · ${gpu.enabled ? 'WebGPU' : 'JavaScript'}`;
+      stats.value = `step ${tick} · structures ${structures()} · births ${birthLog.length}/${viable} viable · balance ${(mass() - initialMass - environmentDelta).toExponential(2)} · ${engineLabel()}`;
     }
     async function animate() {
       if (!frameBusy) {
@@ -399,9 +447,9 @@
           if (running) await advanceSimulation(+speed.value);
           draw(); const elapsed = Math.max(window.performance.now() - started, .01), rate = (tick - before) * 1000 / elapsed;
           if (tick > before) measuredSteps = measuredSteps ? measuredSteps * .8 + rate * .2 : rate;
-          performanceOutput.value = `${gpu.enabled ? 'WebGPU' : 'JavaScript'} · ${Math.round(measuredSteps)} steps/s${engineNote ? ` · ${engineNote}` : ''}`;
+          performanceOutput.value = `${engineLabel()} · ${Math.round(measuredSteps)} steps/s${engineNote ? ` · ${engineNote}` : ''}`;
         } catch (error) {
-          gpu.enabled = false; engineNote = error.message; backendControl.value = 'javascript'; speed.max = 30; running = false; pause.textContent = 'Start';
+          gpu.enabled = false; particleMode = false; engineNote = error.message; backendControl.value = 'javascript'; speed.max = 30; running = false; pause.textContent = 'Start';
           performanceOutput.value = `WebGPU stopped · ${engineNote}`;
         } finally { frameBusy = false; }
       }
