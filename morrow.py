@@ -215,9 +215,10 @@ class World:
         neighbor_body = self._neighbor_mean(self.body)
         affinity = neighbor_body + self.complexity_pressure * neighbor_body + 0.35 * self.resource - self.waste_inhibition * self.waste
         steering = 0.5 + 3.0 * self.trait_field()
-        self.body = self._transport(self.body, affinity, steering)
-        self.trait_mass = self._transport(self.trait_mass, affinity, steering)
-        self.mutation_mass = self._transport(self.mutation_mass, affinity, steering)
+        weights = self._transport_weights(affinity, steering)
+        self.body = self._apply_transport(self.body, weights)
+        self.trait_mass = self._apply_transport(self.trait_mass, weights)
+        self.mutation_mass = self._apply_transport(self.mutation_mass, weights)
         traits = self.trait_field()
         connectedness = np.divide(neighbor_body, self.body + neighbor_body, out=np.zeros_like(self.body), where=self.body + neighbor_body > 1e-12)
         intake = np.minimum(self.resource, self.metabolism_rate * (0.5 + traits) * self.body * self.resource * (1.0 + self.complexity_pressure * connectedness))
@@ -376,13 +377,19 @@ class World:
         return (field + np.roll(field, 1, 0) + np.roll(field, -1, 0) + np.roll(field, 1, 1) + np.roll(field, -1, 1)) / 5.0
 
     def _transport(self, mass: np.ndarray, affinity: np.ndarray, steering: np.ndarray | float | None = None) -> np.ndarray:
+        return self._apply_transport(mass, self._transport_weights(affinity, steering))
+
+    def _transport_weights(self, affinity: np.ndarray, steering: np.ndarray | float | None = None) -> np.ndarray:
         directions = ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))
         steering = self.steering if steering is None else steering
         scores = [np.zeros_like(affinity)] + [steering * (np.roll(affinity, (-dy, -dx), axis=(0, 1)) - affinity) for dy, dx in directions[1:]]
         scores = np.stack(scores)
         scores -= scores.max(axis=0, keepdims=True)
         weights = np.exp(np.clip(scores, -60.0, 0.0))
-        weights = (1.0 - self.diffusion) * weights / weights.sum(axis=0, keepdims=True) + self.diffusion / 5.0
+        return (1.0 - self.diffusion) * weights / weights.sum(axis=0, keepdims=True) + self.diffusion / 5.0
+
+    def _apply_transport(self, mass: np.ndarray, weights: np.ndarray) -> np.ndarray:
+        directions = ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1))
         return sum(np.roll(mass * weight, direction, axis=(0, 1)) for weight, direction in zip(weights, directions))
 
     def write_ppm(self, path: Path) -> None:
