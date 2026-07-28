@@ -35,7 +35,7 @@
     <label>Resolution <select id="resolution"><option value="96x72">96 × 72</option><option value="144x108">144 × 108</option><option value="192x144">192 × 144</option></select></label>
     <label>Engine <select id="backend"><option value="webgpu">WebGPU</option><option value="javascript">JavaScript</option></select></label>
     <label>Steps / frame <input id="speed" type="range" min="1" max="500" value="30"><output id="speed-value">30</output></label>
-    <output id="performance">initializing engine</output>
+    <output id="performance" aria-live="polite">initializing engine</output>
     <output id="stats" aria-live="polite"></output>
   </div>
   <details open>
@@ -90,17 +90,26 @@
     const ruleIds = ['resource-strength', 'body-strength', 'source-scale', 'metabolism', 'yield', 'decay', 'waste', 'recycle-rate', 'diffusion', 'steering', 'interval', 'fraction', 'mutation-scale', 'regrowth', 'capacity', 'waste-decay', 'waste-diffusion', 'dormancy-threshold', 'dormancy-cost', 'complexity'];
     let randomState = 1;
     const history = document.getElementById('history'), historyContext = history.getContext('2d'), patternsPanel = document.getElementById('patterns');
-    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog, currentPatterns = [], previousPatterns = [], nextPatternId = 1, patternTracks = new Map(), patternEvents = [], trackedTick = -1, faultTick = null, faultPhase = '', frameBusy = false, measuredSteps = 0;
+    let running = true, tick = 0, body, resource, waste, traitMass, mutationMass, source, initialMass, environmentDelta, birthLog, historyLog, currentPatterns = [], previousPatterns = [], nextPatternId = 1, patternTracks = new Map(), patternEvents = [], trackedTick = -1, faultTick = null, faultPhase = '', frameBusy = false, measuredSteps = 0, engineNote = '';
     const gpu = { enabled: false, device: null, current: 0, buffers: [], advanceGroups: [], diffuseGroups: [] };
     const gpuShader = `
-      struct Cell { body: f32, resource: f32, waste: f32, trait: f32, mutation: f32, source: f32, environment: f32, padding: f32 }
+      struct Cell {
+        body: f32,
+        food: f32,
+        waste: f32,
+        phenotype: f32,
+        mutation: f32,
+        source: f32,
+        environment: f32,
+        padding: f32,
+      }
       @group(0) @binding(0) var<storage, read> input: array<Cell>;
       @group(0) @binding(1) var<storage, read_write> output: array<Cell>;
       @group(0) @binding(2) var<storage, read> params: array<f32>;
       fn wrap(value: i32, size: i32) -> i32 { return ((value % size) + size) % size; }
       fn cellIndex(y: i32, x: i32) -> u32 { return u32(wrap(y, i32(params[1])) * i32(params[0]) + wrap(x, i32(params[0]))); }
       fn neighborBody(y: i32, x: i32) -> f32 { return (input[cellIndex(y-1,x)].body + input[cellIndex(y+1,x)].body + input[cellIndex(y,x-1)].body + input[cellIndex(y,x+1)].body) * .25; }
-      fn affinity(y: i32, x: i32) -> f32 { let i=cellIndex(y,x); let n=neighborBody(y,x); return (input[i].body + 4.0*n)*.2 + params[15]*n + .35*input[i].resource - params[5]*input[i].waste; }
+      fn affinity(y: i32, x: i32) -> f32 { let i=cellIndex(y,x); let n=neighborBody(y,x); return (input[i].body + 4.0*n)*.2 + params[15]*n + .35*input[i].food - params[5]*input[i].waste; }
       fn transportWeight(y: i32, x: i32, selected: u32) -> f32 {
         let center=affinity(y,x); let steering=params[8];
         var scores=array<f32,5>(0.0, steering*(affinity(y+1,x)-center), steering*(affinity(y-1,x)-center), steering*(affinity(y,x+1)-center), steering*(affinity(y,x-1)-center));
@@ -115,10 +124,10 @@
         let y=i32(id.x/u32(params[0])); let x=i32(id.x%u32(params[0]));
         var ys=array<i32,5>(y,y-1,y+1,y,y); var xs=array<i32,5>(x,x,x,x-1,x+1);
         var movedBody=0.0; var movedTrait=0.0; var movedMutation=0.0;
-        for(var direction=0u;direction<5u;direction++){ let sourceIndex=cellIndex(ys[direction],xs[direction]); let share=transportWeight(ys[direction],xs[direction],direction); movedBody+=input[sourceIndex].body*share; movedTrait+=input[sourceIndex].trait*share; movedMutation+=input[sourceIndex].mutation*share; }
+        for(var direction=0u;direction<5u;direction++){ let sourceIndex=cellIndex(ys[direction],xs[direction]); let share=transportWeight(ys[direction],xs[direction],direction); movedBody+=input[sourceIndex].body*share; movedTrait+=input[sourceIndex].phenotype*share; movedMutation+=input[sourceIndex].mutation*share; }
         let old=input[id.x]; let traitValue=select(.5,movedTrait/max(movedBody,1e-12),movedBody>1e-12); let mutationValue=select(.04,movedMutation/max(movedBody,1e-12),movedBody>1e-12);
-        let connected=neighborBody(y,x)/max(movedBody+neighborBody(y,x),1e-12); let intake=min(old.resource,params[2]*(.5+traitValue)*movedBody*old.resource*(1.0+params[15]*connected)); let growth=params[3]*intake;
-        var resourceValue=old.resource-intake; var bodyValue=movedBody+growth; var traitMass=movedTrait+traitValue*growth; var mutationMass=movedMutation+mutationValue*growth; var wasteValue=old.waste+(1.0-params[3])*intake;
+        let connected=neighborBody(y,x)/max(movedBody+neighborBody(y,x),1e-12); let intake=min(old.food,params[2]*(.5+traitValue)*movedBody*old.food*(1.0+params[15]*connected)); let growth=params[3]*intake;
+        var resourceValue=old.food-intake; var bodyValue=movedBody+growth; var traitMass=movedTrait+traitValue*growth; var mutationMass=movedMutation+mutationValue*growth; var wasteValue=old.waste+(1.0-params[3])*intake;
         let decay=params[4]*bodyValue*select(1.0,params[14],bodyValue<params[13]); bodyValue-=decay; traitMass-=traitValue*decay; mutationMass-=mutationValue*decay; wasteValue+=decay;
         let regrown=params[9]*old.source*max(0.0,params[10]-resourceValue); let cleaned=params[11]*wasteValue; resourceValue+=regrown; wasteValue-=cleaned;
         if(params[16]>.5){ let recovered=min(wasteValue,params[6]*old.source*wasteValue); wasteValue-=recovered; resourceValue+=recovered; }
@@ -128,7 +137,7 @@
       fn diffuse(@builtin(global_invocation_id) id: vec3<u32>) {
         let count=u32(params[0]*params[1]); if(id.x>=count){return;} let y=i32(id.x/u32(params[0])); let x=i32(id.x%u32(params[0])); let old=input[id.x];
         let mixed=(old.waste+input[cellIndex(y-1,x)].waste+input[cellIndex(y+1,x)].waste+input[cellIndex(y,x-1)].waste+input[cellIndex(y,x+1)].waste)*.2;
-        output[id.x]=Cell(old.body,old.resource,(1.0-params[12])*old.waste+params[12]*mixed,old.trait,old.mutation,old.source,old.environment,0.0);
+        output[id.x]=Cell(old.body,old.food,(1.0-params[12])*old.waste+params[12]*mixed,old.phenotype,old.mutation,old.source,old.environment,0.0);
       }`;
 
     function random() { randomState = (1664525 * randomState + 1013904223) >>> 0; return randomState / 4294967296; }
@@ -292,13 +301,17 @@
       if (shaderErrors.length) throw new Error(`WebGPU shader: ${shaderErrors[0].message}`);
       gpu.advancePipeline = await gpu.device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'advance' } });
       gpu.diffusePipeline = await gpu.device.createComputePipelineAsync({ layout: 'auto', compute: { module, entryPoint: 'diffuse' } });
-      gpu.enabled = true; createGpuResources(); uploadGpuState(); speed.max = 500; performanceOutput.value = 'WebGPU ready';
-      gpu.device.lost.then(() => { gpu.enabled = false; backendControl.value = 'javascript'; speed.max = 30; performanceOutput.value = 'GPU lost · JavaScript fallback'; });
+      gpu.enabled = true; engineNote = ''; createGpuResources(); uploadGpuState(); speed.max = 500; performanceOutput.value = 'WebGPU ready';
+      gpu.device.lost.then(() => { gpu.enabled = false; engineNote = 'GPU device lost'; backendControl.value = 'javascript'; speed.max = 30; performanceOutput.value = 'JavaScript fallback · GPU device lost'; });
     }
     async function selectBackend() {
-      if (backendControl.value === 'javascript') { gpu.enabled = false; speed.max = 30; if (+speed.value > 30) speed.value = 30; speedValue.value = speed.value; performanceOutput.value = 'JavaScript engine'; return; }
+      if (backendControl.value === 'javascript') { gpu.enabled = false; engineNote = navigator.gpu ? '' : 'WebGPU unavailable in this browser'; speed.max = 30; if (+speed.value > 30) speed.value = 30; speedValue.value = speed.value; performanceOutput.value = `JavaScript engine${engineNote ? ` · ${engineNote}` : ''}`; return; }
       try { if (!gpu.device) await initWebGPU(); else { gpu.enabled = true; createGpuResources(); uploadGpuState(); speed.max = 500; } }
-      catch (error) { gpu.enabled = false; backendControl.value = 'javascript'; speed.max = 30; if (+speed.value > 30) speed.value = 30; speedValue.value = speed.value; performanceOutput.value = `${error.message} · JavaScript fallback`; }
+      catch (error) {
+        gpu.enabled = false; engineNote = error.message; backendControl.value = 'javascript'; speed.max = 30;
+        if (!navigator.gpu) { const option = backendControl.querySelector('[value="webgpu"]'); option.disabled = true; option.textContent = 'WebGPU (unavailable here)'; }
+        if (+speed.value > 30) speed.value = 30; speedValue.value = speed.value; performanceOutput.value = `JavaScript fallback · ${engineNote}`;
+      }
     }
     async function advanceSimulation(count) { if (gpu.enabled) await gpuAdvanceSteps(count); else for (let i = 0; i < count; i++) step(); }
     function reset() {
@@ -386,10 +399,10 @@
           if (running) await advanceSimulation(+speed.value);
           draw(); const elapsed = Math.max(window.performance.now() - started, .01), rate = (tick - before) * 1000 / elapsed;
           if (tick > before) measuredSteps = measuredSteps ? measuredSteps * .8 + rate * .2 : rate;
-          performanceOutput.value = `${gpu.enabled ? 'WebGPU' : 'JavaScript'} · ${Math.round(measuredSteps)} steps/s`;
+          performanceOutput.value = `${gpu.enabled ? 'WebGPU' : 'JavaScript'} · ${Math.round(measuredSteps)} steps/s${engineNote ? ` · ${engineNote}` : ''}`;
         } catch (error) {
-          gpu.enabled = false; backendControl.value = 'javascript'; speed.max = 30; running = false; pause.textContent = 'Start';
-          performanceOutput.value = `WebGPU stopped · ${error.message}`;
+          gpu.enabled = false; engineNote = error.message; backendControl.value = 'javascript'; speed.max = 30; running = false; pause.textContent = 'Start';
+          performanceOutput.value = `WebGPU stopped · ${engineNote}`;
         } finally { frameBusy = false; }
       }
       requestAnimationFrame(animate);
