@@ -43,7 +43,12 @@ class ExperimentApp(tk.Tk):
         self.gpu_screen_total = 0
         self.fields: dict[str, tk.StringVar] = {}
         self.engine = tk.StringVar(value="Field")
+        self.help_text = tk.StringVar(value="Select or hover over a control to see what it changes.")
         self._build()
+
+    def _help(self, widget: tk.Widget, text: str) -> None:
+        widget.bind("<Enter>", lambda _event: self.help_text.set(text))
+        widget.bind("<FocusIn>", lambda _event: self.help_text.set(text))
 
     def _build(self) -> None:
         controls = ttk.LabelFrame(self, text="Experiment grid")
@@ -55,37 +60,69 @@ class ExperimentApp(tk.Tk):
             ("Sample every", "1000"), ("Workers", "3"), ("Broad configs", "256"),
             ("GPU screen steps", "20000"), ("GPU batch", "64"), ("Replay top", "8"),
         ]
+        explanations = {
+            "Seeds": "Comma-separated random seeds. Reusing a seed makes conditions reproducible.",
+            "Steps": "Number of simulation steps for each run. Larger values reveal longer-term persistence but take longer.",
+            "Body yield": "Fraction of consumed resource converted into body mass. The remainder becomes waste.",
+            "Decay": "Per-step body-mass decay for field-engine runs. Higher values make persistence harder.",
+            "Particle decay": "Per-step body-mass decay for Particle hybrid runs. These lower values are tuned for particle-scale dynamics.",
+            "Sample every": "How often the run records metrics and refreshes checkpoint data.",
+            "Workers": "Number of parallel worker processes. More workers can finish grids faster but use more CPU and memory.",
+            "Broad configs": "Number of Latin-hypercube parameter configurations used by Broad sweep or GPU screening.",
+            "GPU screen steps": "Short screening horizon for GPU runs before the strongest configurations are replayed on CPU.",
+            "GPU batch": "Number of GPU worlds advanced together. Larger batches can improve throughput if GPU memory allows.",
+            "Replay top": "Number of top GPU-screened configurations replayed for the full Steps duration.",
+        }
         for index, (label, default) in enumerate(specs):
             row, column = divmod(index, 3)
             ttk.Label(controls, text=label).grid(row=row * 2, column=column, sticky="w", padx=8, pady=(8, 0))
             variable = tk.StringVar(value=default)
             self.fields[label] = variable
-            ttk.Entry(controls, textvariable=variable, width=22).grid(row=row * 2 + 1, column=column, sticky="ew", padx=8, pady=(0, 8))
+            entry = ttk.Entry(controls, textvariable=variable, width=22)
+            entry.grid(row=row * 2 + 1, column=column, sticky="ew", padx=8, pady=(0, 8))
+            self._help(entry, explanations[label])
         for column in range(3):
             controls.columnconfigure(column, weight=1)
 
         options = ttk.Frame(self)
         options.pack(fill="x", padx=10)
         ttk.Label(options, text="Engine").pack(side="left", padx=(0, 4))
-        ttk.Combobox(options, textvariable=self.engine, values=("Field", "Particle hybrid"), state="readonly", width=16).pack(side="left", padx=(0, 12))
+        engine_box = ttk.Combobox(options, textvariable=self.engine, values=("Field", "Particle hybrid"), state="readonly", width=16)
+        engine_box.pack(side="left", padx=(0, 12))
+        self._help(engine_box, "Simulation engine. Field runs use the established grid model; Particle hybrid runs use force-bearing particles coupled to resource and waste fields.")
         self.reproduce = tk.BooleanVar(value=True)
         self.mutate = tk.BooleanVar(value=True)
         self.recycle = tk.BooleanVar(value=True)
         self.spatial = tk.BooleanVar(value=True)
         for label, variable in (("Seed emission", self.reproduce), ("Mutation", self.mutate),
                                 ("Recycling", self.recycle), ("Spatial resources", self.spatial)):
-            ttk.Checkbutton(options, text=label, variable=variable).pack(side="left", padx=(0, 14))
+            checkbox = ttk.Checkbutton(options, text=label, variable=variable)
+            checkbox.pack(side="left", padx=(0, 14))
+            self._help(checkbox, {
+                "Seed emission": "Allow the field engine to emit new seed bodies. Particle hybrid reproduction is not implemented yet.",
+                "Mutation": "Allow inherited trait variation in field-engine births.",
+                "Recycling": "Return recyclable waste to the resource pool instead of leaving it unavailable.",
+                "Spatial resources": "Keep resource patches spatially localized. Turning this off creates a well-mixed resource control.",
+            }[label])
         self.start_button = ttk.Button(options, text="Run grid", command=self.start)
         self.start_button.pack(side="left", padx=8)
+        self._help(self.start_button, "Run the Cartesian product of the selected seeds and parameter values in parallel.")
         self.broad_button = ttk.Button(options, text="Broad sweep", command=lambda: self.start(broad=True))
         self.broad_button.pack(side="left")
+        self._help(self.broad_button, "Generate a broad Latin-hypercube sample across the major rules and run it in parallel.")
         self.gpu_button = ttk.Button(options, text="GPU screen + replay", command=self.start_gpu)
         self.gpu_button.pack(side="left", padx=8)
+        self._help(self.gpu_button, "Screen many configurations on the GPU, then replay the strongest candidates with the full experiment settings.")
         self.overnight_button = ttk.Button(options, text="Overnight campaign", command=self.start_overnight)
         self.overnight_button.pack(side="left")
+        self._help(self.overnight_button, "Load the long-running campaign preset and start GPU screening plus replay.")
         self.stop_button = ttk.Button(options, text="Stop", command=self.stop, state="disabled")
         self.stop_button.pack(side="left")
-        ttk.Button(options, text="Export results", command=self.export).pack(side="left", padx=8)
+        self._help(self.stop_button, "Request a safe stop after the current worker results finish reporting.")
+        export_button = ttk.Button(options, text="Export results", command=self.export)
+        export_button.pack(side="left", padx=8)
+        self._help(export_button, "Save the currently displayed results or GPU report as a JSON file.")
+        ttk.Label(self, textvariable=self.help_text, relief="groove", anchor="w", justify="left", wraplength=1040).pack(fill="x", padx=10, pady=(4, 6))
         self.status = tk.StringVar(value="Ready")
         ttk.Label(options, textvariable=self.status).pack(side="right")
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=1, value=0)
