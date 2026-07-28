@@ -308,11 +308,14 @@ class World:
         if donated <= 0.0:
             return []
         parent_trait = float(self.trait_mass[donor_y, donor_x].sum() / self.body[donor_y, donor_x].sum())
-        parent_mutation = float(self.mutation_mass[donor_y, donor_x].sum() / self.body[donor_y, donor_x].sum())
+        parent_mutation = float(np.clip(
+            self.mutation_mass[donor_y, donor_x].sum() / self.body[donor_y, donor_x].sum(),
+            0.005, 0.2,
+        ))
         self.body[donor_y, donor_x] -= donation
         self.trait_mass[donor_y, donor_x] -= donation * parent_trait
         self.mutation_mass[donor_y, donor_x] -= donation * parent_mutation
-        mutation = parent_mutation if mutation is None else mutation
+        mutation = parent_mutation if mutation is None else float(np.clip(mutation, 0.0, 0.2))
         child_trait = float(np.clip(parent_trait + self.rng.normal(0.0, mutation), 0.0, 1.0))
         child_mutation = float(np.clip(parent_mutation + self.rng.normal(0.0, self.mutation_scale), 0.005, 0.2))
         kernel = np.array(((1.0, 2.0, 1.0), (2.0, 4.0, 2.0), (1.0, 2.0, 1.0))) / 16.0
@@ -425,6 +428,29 @@ class World:
         with path.open("wb") as stream:
             stream.write(f"P6\n{pixels.shape[1]} {pixels.shape[0]}\n255\n".encode())
             stream.write(pixels.tobytes())
+
+
+def reproduction_preflight(seeds: tuple[int, ...] = (1, 2, 3)) -> dict[str, float | int]:
+    """Run a cheap GUI safety check for invalid inherited mutation scales."""
+    births = []
+    for seed in seeds:
+        world = World.seeded(seed=seed, source_scale=2.5, resource_strength=2.0, body_strength=1.1)
+        components = world.components()
+        if not components:
+            raise RuntimeError(f"seed {seed} produced no reproduction candidate")
+        parent = components[0]
+        width = world.body.shape[1]
+        ys = np.asarray([cell // width for cell in parent.cells])
+        xs = np.asarray([cell % width for cell in parent.cells])
+        world.mutation_mass[ys, xs] = -1e-8
+        emitted = world.intrinsic_reproduction()
+        if not emitted:
+            raise RuntimeError(f"seed {seed} emitted no birth during mutation preflight")
+        births.extend(emitted)
+    rates = [birth.mutation_rate for birth in births]
+    if not all(np.isfinite(rates)) or min(rates) < 0.005 or max(rates) > 0.2:
+        raise RuntimeError("preflight produced an invalid child mutation rate")
+    return {"seeds": len(seeds), "births": len(births), "minimum_mutation_rate": float(min(rates))}
 
 
 def run(steps: int, every: int, output: Path, seed: int, probe: bool = False, config: dict | None = None) -> World:

@@ -87,6 +87,20 @@ class WorldTests(unittest.TestCase):
         self.assertTrue(np.isclose(world.total_mass, before, atol=1e-10))
         self.assertGreaterEqual(births[0].mutation_rate, 0.005)
 
+    def test_reproduction_clamps_negative_parent_mutability(self) -> None:
+        body = np.zeros((24, 24)); body[10:13, 10:13] = 2.0
+        world = World(body, np.ones_like(body), np.zeros_like(body), body * 0.7, body * 0.06,
+                      np.ones_like(body), rng=np.random.default_rng(6))
+        component = world.components()[0]
+        width = world.body.shape[1]
+        ys = np.asarray([cell // width for cell in component.cells])
+        xs = np.asarray([cell % width for cell in component.cells])
+        world.mutation_mass[ys, xs] = -1e-8
+        births = world.intrinsic_reproduction()
+        self.assertEqual(len(births), 1)
+        self.assertTrue(np.isfinite(births[0].trait))
+        self.assertGreaterEqual(births[0].mutation_rate, 0.005)
+
     def test_viable_births_leave_the_pending_assessment_queue(self) -> None:
         body = np.zeros((24, 24)); body[10:13, 10:13] = 2.0
         world = World(body, np.ones_like(body), np.zeros_like(body), body * 0.7, body * 0.06, np.ones_like(body))

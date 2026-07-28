@@ -13,6 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 from broad_sweep import latin_hypercube
 from experiments import run_condition
 from gpu_sweep import screen_and_replay
+from morrow import reproduction_preflight
 
 
 def numbers(text: str, cast=float) -> list:
@@ -195,6 +196,14 @@ class ExperimentApp(tk.Tk):
         except (TypeError, ValueError) as error:
             messagebox.showerror("Invalid setup", str(error))
             return
+        self.status.set("Running reproduction/mutation preflight...")
+        try:
+            check = reproduction_preflight()
+        except Exception as error:
+            self.status.set("Preflight failed")
+            messagebox.showerror("GPU preflight failed", str(error))
+            return
+        self.status.set(f"Preflight passed: {check['births']} mutation checks")
         self.results.clear(); self.gpu_report = None; self.images.clear()
         self.table.delete(*self.table.get_children())
         for child in self.visual_inner.winfo_children():
