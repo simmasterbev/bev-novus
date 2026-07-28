@@ -20,6 +20,12 @@ from morrow import World
 
 
 Progress = Callable[[str, int, int, str], None]
+MIN_SCREEN_MASS = 0.1
+
+
+def safe_trait_spread(xp, mass, variance):
+    """Ignore variance from numerically empty worlds during screening."""
+    return xp.where(mass >= MIN_SCREEN_MASS, xp.sqrt(xp.maximum(variance, 0.0)), 0.0)
 
 
 def load_cupy():
@@ -134,11 +140,12 @@ class GpuBatch:
         alive = (active >= 4) & (mass > 0.1)
         self.alive_samples += alive
         self.samples += 1
-        score = self.alive_samples / self.samples + cp.log1p(active) * 0.1 + cp.sqrt(cp.maximum(variance, 0.0))
+        trait_spread = safe_trait_spread(cp, mass, variance)
+        score = self.alive_samples / self.samples + cp.log1p(active) * 0.1 + trait_spread
         finite = cp.isfinite(mass) & cp.isfinite(variance) & cp.isfinite(corrected)
         score = cp.where(finite, score, -1e30)
         values = cp.asnumpy(cp.stack((cp.where(finite, mass, 0.0), cp.where(finite, active, 0),
-                                     cp.where(finite, cp.sqrt(cp.maximum(variance, 0.0)), 0.0),
+                                     cp.where(finite, trait_spread, 0.0),
                                      cp.where(finite, abs(corrected - expected), 1e30), score, finite), axis=1))
         return [{"body_mass": float(row[0]), "active_cells": int(row[1]), "trait_spread": float(row[2]),
                  "mass_drift": float(row[3]), "screen_score": float(row[4]), "finite": bool(row[5])} for row in values]
@@ -220,6 +227,9 @@ def main() -> None:
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args()
     if args.self_test:
+        regression_mass = np.asarray([0.0, MIN_SCREEN_MASS])
+        regression_variance = np.asarray([100.0, 4.0])
+        assert np.allclose(safe_trait_spread(np, regression_mass, regression_variance), [0.0, 2.0])
         batch = GpuBatch([{"config_id": 1, "config": latin_hypercube(1, 7)[0], "seed": 1}])
         for _ in range(10):
             batch.step()
