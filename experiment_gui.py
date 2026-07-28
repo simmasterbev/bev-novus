@@ -44,6 +44,10 @@ class ExperimentApp(tk.Tk):
         self.fields: dict[str, tk.StringVar] = {}
         self.engine = tk.StringVar(value="Field")
         self.help_text = tk.StringVar(value="Select or hover over a control to see what it changes.")
+        self.live_previews = tk.BooleanVar(value=False)
+        self.live_warning = tk.StringVar(value="Live previews off - lowest overhead mode.")
+        self.live_cards: dict[str, tuple[ttk.Label, ttk.Label]] = {}
+        self.live_images: dict[str, tk.PhotoImage] = {}
         self._build()
 
     def _help(self, widget: tk.Widget, text: str) -> None:
@@ -104,6 +108,10 @@ class ExperimentApp(tk.Tk):
                 "Recycling": "Return recyclable waste to the resource pool instead of leaving it unavailable.",
                 "Spatial resources": "Keep resource patches spatially localized. Turning this off creates a well-mixed resource control.",
             }[label])
+        live_check = ttk.Checkbutton(options, text="Live previews", variable=self.live_previews, command=self._toggle_live_previews)
+        live_check.pack(side="left", padx=(0, 8))
+        self._help(live_check, "Show periodically refreshed images for active runs. This adds disk and GUI work; many simultaneous previews can cause extreme lag.")
+        ttk.Label(options, textvariable=self.live_warning).pack(side="left", padx=(0, 8))
         self.start_button = ttk.Button(options, text="Run grid", command=self.start)
         self.start_button.pack(side="left", padx=8)
         self._help(self.start_button, "Run the Cartesian product of the selected seeds and parameter values in parallel.")
@@ -207,11 +215,22 @@ class ExperimentApp(tk.Tk):
         self.table.delete(*self.table.get_children())
         for child in self.visual_inner.winfo_children():
             child.destroy()
-        self.images.clear()
+        self.images.clear(); self.live_cards.clear(); self.live_images.clear()
         snapshot_dir = Path(__file__).with_name("Results") / "gui-snapshots"
         snapshot_dir.mkdir(parents=True, exist_ok=True)
         for index, job in enumerate(jobs, 1):
-            job["snapshot_path"] = str(snapshot_dir / f"run-{index:04d}.ppm")
+            snapshot_path = snapshot_dir / f"run-{index:04d}.ppm"
+            job["snapshot_path"] = str(snapshot_path)
+            if self.live_previews.get():
+                job["live_snapshot_path"] = str(snapshot_path)
+                job["live_snapshot_every"] = max(250, int(self.fields["Sample every"].get()))
+                card = ttk.Frame(self.visual_inner, padding=6, relief="ridge")
+                card.grid(row=(index - 1) // 4, column=(index - 1) % 4, padx=6, pady=6, sticky="n")
+                image_label = ttk.Label(card, text="waiting for first frame")
+                image_label.pack()
+                meta_label = ttk.Label(card, text=f'{job["label"]}\nseed {job["seed"]} - running')
+                meta_label.pack()
+                self.live_cards[str(snapshot_path)] = (image_label, meta_label)
         self.stop_event.clear()
         self.total_jobs = len(jobs)
         self.completed_jobs = 0
@@ -224,6 +243,24 @@ class ExperimentApp(tk.Tk):
         self.status.set(f"Running 0/{len(jobs)} — {workers} parallel workers — generating results")
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
         self.worker.start()
+        if self.live_previews.get():
+            self._refresh_live_previews()
+
+    def _toggle_live_previews(self) -> None:
+        self.live_warning.set("WARNING: live previews add rendering and file I/O; many runs at once can cause extreme lag." if self.live_previews.get() else "Live previews off - lowest overhead mode.")
+
+    def _refresh_live_previews(self) -> None:
+        for path, (image_label, _meta_label) in self.live_cards.items():
+            if not Path(path).exists():
+                continue
+            try:
+                image = tk.PhotoImage(file=path).zoom(2, 2)
+                self.live_images[path] = image
+                image_label.configure(image=image)
+            except tk.TclError:
+                pass
+        if self.live_previews.get() and self.stop_button["state"] == "normal":
+            self.after(750, self._refresh_live_previews)
 
     def start_gpu(self) -> None:
         try:
@@ -248,7 +285,7 @@ class ExperimentApp(tk.Tk):
             messagebox.showerror("GPU preflight failed", str(error))
             return
         self.status.set(f"Preflight passed: {check['births']} mutation checks")
-        self.results.clear(); self.gpu_report = None; self.images.clear()
+        self.results.clear(); self.gpu_report = None; self.images.clear(); self.live_cards.clear(); self.live_images.clear()
         self.table.delete(*self.table.get_children())
         for child in self.visual_inner.winfo_children():
             child.destroy()
@@ -330,6 +367,12 @@ class ExperimentApp(tk.Tk):
                   f'{result["trait_diversity"]:.3g}', result["groups"])
         self.table.insert("", "end", values=values)
         snapshot = result.get("_snapshot_path")
+        if snapshot in self.live_cards and snapshot and Path(snapshot).exists():
+            image = tk.PhotoImage(file=snapshot).zoom(2, 2)
+            self.live_images[snapshot] = image
+            self.live_cards[snapshot][0].configure(image=image)
+            self.live_cards[snapshot][1].configure(text=f'{result["label"]}\nseed {result["seed"]} - complete')
+            snapshot = None
         if snapshot and Path(snapshot).exists():
             image = tk.PhotoImage(file=snapshot).zoom(2, 2)
             self.images.append(image)

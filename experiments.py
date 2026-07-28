@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -44,11 +45,19 @@ def _write_particle_ppm(world: HybridParticleWorld, path: Path) -> None:
         handle.write(pixels.tobytes())
 
 
+def _atomic_snapshot(path: Path, writer) -> None:
+    temporary = path.with_name(f".{path.name}.tmp")
+    writer(temporary)
+    os.replace(temporary, path)
+
+
 def run_particle_condition(label: str, seed: int, steps: int = 480, *, metabolism: float = 0.02,
                            body_yield: float = 0.72, decay_rate: float = 0.012,
                            resource_regrowth: float = 0.006, resource_capacity: float = 1.0,
                            body_patches: int = 5, body_strength: float = 0.55,
-                           sample_every: int = 1, snapshot_path: Path | None = None, **_: object) -> Result:
+                           sample_every: int = 1, snapshot_path: Path | None = None,
+                           live_snapshot_path: Path | None = None, live_snapshot_every: int = 1000,
+                           **_: object) -> Result:
     """Run the Phase 1 hybrid mechanics with the GUI's common result contract."""
     count = max(16, body_patches * 12)
     world = HybridParticleWorld.seeded(seed=seed, count=count)
@@ -71,8 +80,10 @@ def run_particle_condition(label: str, seed: int, steps: int = 480, *, metabolis
             np.add.at(world.waste, (rows, columns), decay)
         if not (np.isfinite(world.particle.positions).all() and np.isfinite(world.total_mass)):
             raise FloatingPointError("particle hybrid produced a non-finite state")
+        if live_snapshot_path is not None and (_step + 1) % max(1, live_snapshot_every) == 0:
+            _atomic_snapshot(Path(live_snapshot_path), lambda path: _write_particle_ppm(world, path))
     if snapshot_path is not None:
-        _write_particle_ppm(world, Path(snapshot_path))
+        _atomic_snapshot(Path(snapshot_path), lambda path: _write_particle_ppm(world, path))
     live = int(np.count_nonzero(world.particle.masses > 0.05))
     compactness = float(min(1.0, live / max(count, 1)))
     return Result(label, seed, live, 0, 0, 0.0, 0.0,
@@ -109,7 +120,8 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
                   waste_decay: float = 0.002, waste_diffusion: float = 0.12,
                   dormancy_threshold: float = 0.08, dormancy_cost: float = 0.15,
                   body_yield: float = 0.72, decay_rate: float = 0.012, complexity_pressure: float = 0.35,
-                  sample_every: int = 1, snapshot_path: Path | None = None) -> Result:
+                  sample_every: int = 1, snapshot_path: Path | None = None,
+                  live_snapshot_path: Path | None = None, live_snapshot_every: int = 1000) -> Result:
     world, census = World.seeded(seed=seed, source_scale=source_scale, resource_patches=resource_patches,
                                  body_patches=body_patches, resource_strength=resource_strength,
                                  body_strength=body_strength), PatternCensus()
@@ -142,10 +154,12 @@ def run_condition(label: str, seed: int, steps: int = 480, *, mutate: bool = Tru
             census.register_birth(birth, census.current)
         registered_births = len(world.births)
         world.assess_births(tick)
+        if live_snapshot_path is not None and (tick + 1) % max(1, live_snapshot_every) == 0:
+            _atomic_snapshot(Path(live_snapshot_path), world.write_ppm)
     eco, evo = ecology_metrics(world, census), evolvability_metrics(world, census)
     individual, collective = individuality_metrics(world, census), collective_metrics(world, census)
     if snapshot_path is not None:
-        world.write_ppm(Path(snapshot_path))
+        _atomic_snapshot(Path(snapshot_path), world.write_ppm)
     return Result(label, seed, len(census.current), len(world.births), int(evo["viable_births"]),
                   evo["trait_diversity"], eco["occupied_trait_niches"], abs(world.total_mass - baseline - world.external_delta),
                   individual["compactness"], individual["boundary_ratio"], individual["ambiguous_identity"], collective["multi_core_groups"])
