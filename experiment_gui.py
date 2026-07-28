@@ -11,7 +11,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from broad_sweep import latin_hypercube
-from experiments import run_condition
+from experiments import run_condition, run_particle_condition
 from gpu_sweep import screen_and_replay
 from morrow import reproduction_preflight
 
@@ -24,7 +24,8 @@ def numbers(text: str, cast=float) -> list:
 
 
 def run_one(job: dict):
-    return run_condition(**job)
+    engine = job.pop("engine", "field")
+    return (run_particle_condition if engine == "particle" else run_condition)(**job)
 
 
 class ExperimentApp(tk.Tk):
@@ -41,6 +42,7 @@ class ExperimentApp(tk.Tk):
         self.gpu_report: dict | None = None
         self.gpu_screen_total = 0
         self.fields: dict[str, tk.StringVar] = {}
+        self.engine = tk.StringVar(value="Field")
         self._build()
 
     def _build(self) -> None:
@@ -63,6 +65,8 @@ class ExperimentApp(tk.Tk):
 
         options = ttk.Frame(self)
         options.pack(fill="x", padx=10)
+        ttk.Label(options, text="Engine").pack(side="left", padx=(0, 4))
+        ttk.Combobox(options, textvariable=self.engine, values=("Field", "Particle hybrid"), state="readonly", width=16).pack(side="left", padx=(0, 12))
         self.reproduce = tk.BooleanVar(value=True)
         self.mutate = tk.BooleanVar(value=True)
         self.recycle = tk.BooleanVar(value=True)
@@ -114,6 +118,7 @@ class ExperimentApp(tk.Tk):
 
     def jobs(self, broad: bool = False) -> list[dict]:
         seeds = numbers(self.fields["Seeds"].get(), int)
+        engine = "particle" if self.engine.get() == "Particle hybrid" else "field"
         steps = int(self.fields["Steps"].get())
         sample_every = int(self.fields["Sample every"].get())
         if steps < 1 or sample_every < 1:
@@ -126,7 +131,7 @@ class ExperimentApp(tk.Tk):
             return [{"label": f"lhs-{index:04d}", "seed": seed, "steps": steps,
                      "sample_every": sample_every, "reproduce": self.reproduce.get(),
                      "mutate": self.mutate.get(), "recycle": self.recycle.get(),
-                     "spatial": self.spatial.get(), **config}
+                     "spatial": self.spatial.get(), "engine": engine, **config}
                     for index, config in enumerate(configs, 1) for seed in seeds]
         yields = numbers(self.fields["Body yield"].get())
         decays = numbers(self.fields["Decay"].get())
@@ -140,7 +145,7 @@ class ExperimentApp(tk.Tk):
                         "decay_rate": decay_rate, "sample_every": sample_every,
                         "reproduce": self.reproduce.get(), "mutate": self.mutate.get(),
                         "recycle": self.recycle.get(), "spatial": self.spatial.get(),
-                        "metabolism": 0.035, "diffusion": 0.5, "waste_inhibition": 0.1,
+                     "metabolism": 0.035, "diffusion": 0.5, "waste_inhibition": 0.1,
                         "recycle_rate": 0.1, "seed_interval": 20, "source_scale": 0.5,
                         "steering": 5.0, "seed_fraction": 0.05, "mutation_scale": 0.02,
                         "resource_patches": 5, "body_patches": 5, "resource_strength": 1.15,
@@ -148,6 +153,7 @@ class ExperimentApp(tk.Tk):
                         "waste_decay": 0.02, "waste_diffusion": 0.02,
                         "dormancy_threshold": 0.06, "dormancy_cost": 0.15,
                         "complexity_pressure": 0.65,
+                        "engine": engine,
                     })
         return jobs
 

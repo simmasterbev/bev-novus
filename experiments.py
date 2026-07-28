@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 
 from morrow import PatternCensus, World, collective_metrics, ecology_metrics, evolvability_metrics, individuality_metrics
+from particle_prototype import HybridParticleWorld
 
 
 @dataclass
@@ -26,6 +27,56 @@ class Result:
     boundary_ratio: float
     identity_ambiguity: float
     groups: float
+
+
+def _write_particle_ppm(world: HybridParticleWorld, path: Path) -> None:
+    """Write a small compatible snapshot for the existing Tkinter viewer."""
+    height, width = world.resource.shape
+    body = np.zeros_like(world.resource)
+    rows, columns = world._indices()
+    for row, column, mass in zip(rows, columns, world.particle.masses):
+        body[row, column] += mass
+    scale = max(float(body.max()), float(world.resource.max()), float(world.waste.max()), 1e-9)
+    pixels = np.stack((world.waste, body, world.resource), axis=-1)
+    pixels = np.clip(pixels * 255.0 / scale, 0, 255).astype(np.uint8)
+    with Path(path).open("wb") as handle:
+        handle.write(f"P6\n{width} {height}\n255\n".encode("ascii"))
+        handle.write(pixels.tobytes())
+
+
+def run_particle_condition(label: str, seed: int, steps: int = 480, *, metabolism: float = 0.02,
+                           body_yield: float = 0.72, decay_rate: float = 0.012,
+                           resource_regrowth: float = 0.006, resource_capacity: float = 1.0,
+                           body_patches: int = 5, body_strength: float = 0.55,
+                           sample_every: int = 1, snapshot_path: Path | None = None, **_: object) -> Result:
+    """Run the Phase 1 hybrid mechanics with the GUI's common result contract."""
+    count = max(16, body_patches * 12)
+    world = HybridParticleWorld.seeded(seed=seed, count=count)
+    world.metabolism = metabolism
+    world.body_yield = body_yield
+    world.resource_regrowth = resource_regrowth
+    world.resource_capacity = resource_capacity
+    world.waste_decay = 0.0
+    world.particle.masses[:] = max(0.05, body_strength / 2.0)
+    baseline = world.total_mass
+    external_delta = 0.0
+    for _step in range(steps):
+        regrowth = resource_regrowth * world.source * np.maximum(resource_capacity - world.resource, 0.0)
+        external_delta += float(regrowth.sum())
+        world.step()
+        if decay_rate > 0:
+            decay = decay_rate * world.particle.masses
+            world.particle.masses[:] = np.maximum(0.0, world.particle.masses - decay)
+            rows, columns = world._indices()
+            np.add.at(world.waste, (rows, columns), decay)
+        if not (np.isfinite(world.particle.positions).all() and np.isfinite(world.total_mass)):
+            raise FloatingPointError("particle hybrid produced a non-finite state")
+    if snapshot_path is not None:
+        _write_particle_ppm(world, Path(snapshot_path))
+    live = int(np.count_nonzero(world.particle.masses > 0.05))
+    compactness = float(min(1.0, live / max(count, 1)))
+    return Result(label, seed, live, 0, 0, 0.0, 0.0,
+                  abs(world.total_mass - baseline - external_delta), compactness, compactness, 0.0, 0.0)
 
 
 def audit(steps: int = 1000, seeds: tuple[int, ...] = tuple(range(1, 11))) -> dict:
