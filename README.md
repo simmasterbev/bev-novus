@@ -77,6 +77,15 @@ exported as JSON. The default grid matches the recent 200k-step persistence test
 On Windows, double-click `run_experiment_gui.bat` to launch it; it uses the bundled
 runtime when available so NumPy is found automatically.
 
+For a broad screening sweep across all major rules, run `run_broad_sweep.bat`.
+It samples 256 configurations with three seeds each, uses up to 16 workers, runs
+200,000 steps per job, and writes incremental results to `Results/broad-sweep.json`.
+Override settings from a terminal, for example:
+
+```powershell
+run_broad_sweep.bat --configs 512 --steps 200000 --workers 16
+```
+
 ## Roadmap and 2.0 audit
 
 See `ROADMAP.md` for the full release sequence and test gates. Version 2.0 publishes the audit state of those gates, including failures and null results.
