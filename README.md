@@ -87,6 +87,11 @@ configurations with the selected seeds and uses the same workers, progress displ
 visualizations, and JSON export as the normal grid. The standalone
 `run_broad_sweep.bat` remains available for headless runs.
 
+For a long unattended campaign, use the GUI's **Overnight campaign** button or
+double-click `run_overnight_gpu.bat`. It screens 768 configurations across eight
+seeds for 40,000 GPU steps, then CPU-replays the top 12 configurations for
+500,000 steps each. The run writes `Results/overnight-gpu-sweep.json`.
+
 The GUI defaults to three workers and the headless sweep to twelve. The optimized
 step kernel makes these lower-CPU defaults faster than the previous four- and
 sixteen-worker settings on the development machine.

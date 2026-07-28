@@ -75,6 +75,8 @@ class ExperimentApp(tk.Tk):
         self.broad_button.pack(side="left")
         self.gpu_button = ttk.Button(options, text="GPU screen + replay", command=self.start_gpu)
         self.gpu_button.pack(side="left", padx=8)
+        self.overnight_button = ttk.Button(options, text="Overnight campaign", command=self.start_overnight)
+        self.overnight_button.pack(side="left")
         self.stop_button = ttk.Button(options, text="Stop", command=self.stop, state="disabled")
         self.stop_button.pack(side="left")
         ttk.Button(options, text="Export results", command=self.export).pack(side="left", padx=8)
@@ -172,6 +174,7 @@ class ExperimentApp(tk.Tk):
         self.start_button.configure(state="disabled")
         self.broad_button.configure(state="disabled")
         self.gpu_button.configure(state="disabled")
+        self.overnight_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status.set(f"Running 0/{len(jobs)} — {workers} parallel workers — generating results")
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
@@ -201,7 +204,7 @@ class ExperimentApp(tk.Tk):
         self.total_jobs = self.gpu_screen_total + replay_top * len(seeds)
         self.progress.configure(maximum=self.total_jobs, value=0)
         self.start_button.configure(state="disabled"); self.broad_button.configure(state="disabled")
-        self.gpu_button.configure(state="disabled"); self.stop_button.configure(state="normal")
+        self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled"); self.stop_button.configure(state="normal")
         self.status.set(f"Preparing {self.gpu_screen_total} GPU screens")
         configs = latin_hypercube(config_count, seed=7)
         output = Path(__file__).with_name("Results") / "gpu-snapshots"
@@ -210,6 +213,15 @@ class ExperimentApp(tk.Tk):
         self.worker = threading.Thread(target=self._run_gpu,
             args=(configs, seeds, screen_steps, sample_every, batch_size, replay_top, replay_steps, workers, output, controls), daemon=True)
         self.worker.start()
+
+    def start_overnight(self) -> None:
+        preset = {
+            "Seeds": "1,2,3,4,5,6,7,8", "Broad configs": "768", "GPU screen steps": "40000",
+            "Steps": "500000", "Sample every": "5000", "GPU batch": "128", "Replay top": "12", "Workers": "4",
+        }
+        for name, value in preset.items():
+            self.fields[name].set(value)
+        self.start_gpu()
 
     def _run_gpu(self, configs, seeds, screen_steps, sample_every, batch_size, replay_top, replay_steps, workers, output, controls) -> None:
         try:
@@ -276,6 +288,7 @@ class ExperimentApp(tk.Tk):
         self.start_button.configure(state="normal")
         self.broad_button.configure(state="normal")
         self.gpu_button.configure(state="normal")
+        self.overnight_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.progress.configure(value=completed)
         self.status.set("Stopped" if self.stop_event.is_set() else f"Finished — {completed}/{total} results generated")
