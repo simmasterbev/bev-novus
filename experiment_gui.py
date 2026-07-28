@@ -124,6 +124,9 @@ class ExperimentApp(tk.Tk):
         self.overnight_button = ttk.Button(options, text="Overnight campaign", command=self.start_overnight)
         self.overnight_button.pack(side="left")
         self._help(self.overnight_button, "Load the long-running campaign preset and start GPU screening plus replay.")
+        self.particle_campaign_button = ttk.Button(options, text="Particle persistence", command=self.start_particle_campaign)
+        self.particle_campaign_button.pack(side="left", padx=8)
+        self._help(self.particle_campaign_button, "Run 96 particle-hybrid persistence conditions: 8 seeds, 3 body yields, and 4 low-decay values for 200,000 steps.")
         self.stop_button = ttk.Button(options, text="Stop", command=self.stop, state="disabled")
         self.stop_button.pack(side="left")
         self._help(self.stop_button, "Request a safe stop after the current worker results finish reporting.")
@@ -224,6 +227,7 @@ class ExperimentApp(tk.Tk):
         self.broad_button.configure(state="disabled")
         self.gpu_button.configure(state="disabled")
         self.overnight_button.configure(state="disabled")
+        self.particle_campaign_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status.set(f"Running 0/{len(jobs)} — {workers} parallel workers — generating results")
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
@@ -320,7 +324,7 @@ class ExperimentApp(tk.Tk):
         self.total_jobs = self.gpu_screen_total + replay_top * len(seeds)
         self.progress.configure(maximum=self.total_jobs, value=0)
         self.start_button.configure(state="disabled"); self.broad_button.configure(state="disabled")
-        self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled"); self.stop_button.configure(state="normal")
+        self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled"); self.particle_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
         self.status.set(f"Preparing {self.gpu_screen_total} GPU screens")
         configs = latin_hypercube(config_count, seed=7)
         output = Path(__file__).with_name("Results") / "gpu-snapshots"
@@ -338,6 +342,21 @@ class ExperimentApp(tk.Tk):
         for name, value in preset.items():
             self.fields[name].set(value)
         self.start_gpu()
+
+    def start_particle_campaign(self) -> None:
+        preset = {
+            "Seeds": "1,2,3,4,5,6,7,8",
+            "Steps": "200000",
+            "Body yield": "0.55,0.72,0.90",
+            "Particle decay": "0.0001,0.00025,0.0005,0.001",
+            "Workers": "4",
+        }
+        for name, value in preset.items():
+            self.fields[name].set(value)
+        self.engine.set("Particle hybrid")
+        self.live_previews.set(False)
+        self._toggle_live_previews()
+        self.start()
 
     def _run_gpu(self, configs, seeds, screen_steps, sample_every, batch_size, replay_top, replay_steps, workers, output, controls) -> None:
         try:
@@ -418,6 +437,7 @@ class ExperimentApp(tk.Tk):
         self.broad_button.configure(state="normal")
         self.gpu_button.configure(state="normal")
         self.overnight_button.configure(state="normal")
+        self.particle_campaign_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.progress.configure(value=completed)
         self.status.set("Stopped" if self.stop_event.is_set() else f"Finished — {completed}/{total} results generated")
