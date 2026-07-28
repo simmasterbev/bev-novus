@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import threading
 import tkinter as tk
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -32,6 +32,8 @@ class ExperimentApp(tk.Tk):
         self.results: list[dict] = []
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
+        self.total_jobs = 0
+        self.completed_jobs = 0
         self.fields: dict[str, tk.StringVar] = {}
         self._build()
 
@@ -68,6 +70,8 @@ class ExperimentApp(tk.Tk):
         ttk.Button(options, text="Export results", command=self.export).pack(side="left", padx=8)
         self.status = tk.StringVar(value="Ready")
         ttk.Label(options, textvariable=self.status).pack(side="right")
+        self.progress = ttk.Progressbar(self, mode="determinate", maximum=1, value=0)
+        self.progress.pack(fill="x", padx=10, pady=(0, 6))
 
         columns = ("label", "seed", "live", "births", "viable", "compactness", "boundary", "diversity", "groups")
         self.table = ttk.Treeview(self, columns=columns, show="headings", height=21)
@@ -117,22 +121,29 @@ class ExperimentApp(tk.Tk):
         self.results.clear()
         self.table.delete(*self.table.get_children())
         self.stop_event.clear()
+        self.total_jobs = len(jobs)
+        self.completed_jobs = 0
+        self.progress.configure(maximum=self.total_jobs, value=0)
         self.start_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
-        self.status.set(f"Running 0/{len(jobs)}")
+        self.status.set(f"Running 0/{len(jobs)} — {workers} parallel workers — generating results")
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
         self.worker.start()
 
     def _run(self, jobs: list[dict], workers: int) -> None:
         completed = 0
-        with ThreadPoolExecutor(max_workers=workers) as pool:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
             futures = [pool.submit(run_one, job) for job in jobs]
             for future in as_completed(futures):
                 if self.stop_event.is_set():
                     for pending in futures:
                         pending.cancel()
                     break
-                result = asdict(future.result())
+                try:
+                    result = asdict(future.result())
+                except Exception as error:  # keep one failed run from hiding all completed results
+                    result = {"label": f"ERROR: {error}", "seed": "", "live": "", "births": "", "viable": "",
+                              "compactness": 0, "boundary_ratio": 0, "trait_diversity": 0.0, "groups": ""}
                 self.results.append(result)
                 completed += 1
                 self.after(0, self.add_result, result, completed, len(jobs))
@@ -143,12 +154,14 @@ class ExperimentApp(tk.Tk):
                   f'{result["compactness"]:.3f}', f'{result["boundary_ratio"]:.3f}',
                   f'{result["trait_diversity"]:.3g}', result["groups"])
         self.table.insert("", "end", values=values)
-        self.status.set(f"Running {completed}/{total}")
+        self.progress.configure(value=completed)
+        self.status.set(f"Results generated: {completed}/{total} — {total - completed} remaining")
 
     def finished(self, completed: int, total: int) -> None:
         self.start_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
-        self.status.set("Stopped" if self.stop_event.is_set() else f"Finished {completed}/{total}")
+        self.progress.configure(value=completed)
+        self.status.set("Stopped" if self.stop_event.is_set() else f"Finished — {completed}/{total} results generated")
 
     def stop(self) -> None:
         self.stop_event.set()
