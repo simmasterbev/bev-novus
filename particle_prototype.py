@@ -92,7 +92,8 @@ class ParticleWorld:
 
     def _advance(self, forces: np.ndarray) -> np.ndarray:
         self._last_forces = forces
-        self.velocities = self.mobility * self._last_forces / (self.drag * self.masses[:, None])
+        # Keep exhausted particles numerically inert instead of dividing by zero.
+        self.velocities = self.mobility * self._last_forces / (self.drag * np.maximum(self.masses[:, None], 1e-9))
         self.positions = (self.positions + self.timestep * self.velocities) % np.array([self.height, self.width])
         return self.positions.copy()
 

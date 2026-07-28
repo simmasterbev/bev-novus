@@ -51,6 +51,7 @@ class ExperimentApp(tk.Tk):
         specs = [
             ("Seeds", "1,2,3"), ("Steps", "200000"),
             ("Body yield", "0.30,0.40,0.50"), ("Decay", "0.02,0.03,0.04"),
+            ("Particle decay", "0.0005,0.001,0.002"),
             ("Sample every", "1000"), ("Workers", "3"), ("Broad configs", "256"),
             ("GPU screen steps", "20000"), ("GPU batch", "64"), ("Replay top", "8"),
         ]
@@ -134,7 +135,7 @@ class ExperimentApp(tk.Tk):
                      "spatial": self.spatial.get(), "engine": engine, **config}
                     for index, config in enumerate(configs, 1) for seed in seeds]
         yields = numbers(self.fields["Body yield"].get())
-        decays = numbers(self.fields["Decay"].get())
+        decays = numbers(self.fields["Particle decay"].get() if engine == "particle" else self.fields["Decay"].get())
         jobs = []
         for body_yield in yields:
             for decay_rate in decays:

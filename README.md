@@ -85,6 +85,8 @@ The GUI Engine selector can also run the Phase 1 `Particle hybrid` mechanics thr
 the same parallel worker grid and visualization cards. Particle runs report live
 particle count and finite mass drift; reproduction is intentionally deferred until
 the particle prototype reaches its next milestone.
+For particle runs, use the separate `Particle decay` field; its lower defaults avoid
+applying the field engine's much larger per-step decay directly to particle masses.
 
 For a broad screening sweep across all major rules, use the GUI's **Broad sweep**
 button. Set the `Broad configs` field (256 by default); it samples that many
