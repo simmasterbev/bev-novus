@@ -136,10 +136,10 @@ class ExperimentApp(tk.Tk):
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=1, value=0)
         self.progress.pack(fill="x", padx=10, pady=(0, 6))
 
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, padx=10, pady=(8, 10))
-        table_frame = ttk.Frame(notebook)
-        notebook.add(table_frame, text="Results")
+        self.notebook = ttk.Notebook(self)
+        self.notebook.pack(fill="both", expand=True, padx=10, pady=(8, 10))
+        table_frame = ttk.Frame(self.notebook)
+        self.notebook.add(table_frame, text="Results")
         columns = ("label", "seed", "live", "births", "viable", "compactness", "boundary", "diversity", "groups")
         self.table = ttk.Treeview(table_frame, columns=columns, show="headings", height=21)
         headings = {"label": "Condition", "seed": "Seed", "live": "Live", "births": "Births", "viable": "Viable",
@@ -149,8 +149,9 @@ class ExperimentApp(tk.Tk):
             self.table.column(column, width=110 if column == "label" else 85, anchor="center")
         self.table.pack(fill="both", expand=True)
 
-        visual_frame = ttk.Frame(notebook)
-        notebook.add(visual_frame, text="Visualizations")
+        self.visual_frame = ttk.Frame(self.notebook)
+        visual_frame = self.visual_frame
+        self.notebook.add(visual_frame, text="Visualizations")
         visual_frame.rowconfigure(0, weight=1)
         visual_frame.columnconfigure(0, weight=1)
         self.visual_canvas = tk.Canvas(visual_frame, background="black", highlightthickness=0)
@@ -244,6 +245,7 @@ class ExperimentApp(tk.Tk):
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
         self.worker.start()
         if self.live_previews.get():
+            self.notebook.select(self.visual_frame)
             self._refresh_live_previews()
 
     def _toggle_live_previews(self) -> None:
@@ -263,6 +265,8 @@ class ExperimentApp(tk.Tk):
             self.after(750, self._refresh_live_previews)
 
     def start_gpu(self) -> None:
+        if self.live_previews.get():
+            self.live_warning.set("GPU screening does not publish live frames; use Run grid or Broad sweep for live previews. Replay images appear after screening completes.")
         try:
             config_count = int(self.fields["Broad configs"].get())
             seeds = numbers(self.fields["Seeds"].get(), int)
