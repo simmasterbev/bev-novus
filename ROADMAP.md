@@ -28,7 +28,7 @@ The foundation is a respectable artificial-chemistry substrate, but it is not ev
 
 Goal: introduce simple force-bearing body matter without replacing the existing world until the mechanics are validated.
 
-### 1.1 Force system
+### 1.1 Force system (prototype started)
 
 Tasks:
 
@@ -39,6 +39,8 @@ Tasks:
 - preserve periodic-boundary behavior and matter accounting.
 
 Acceptance: isolated bodies remain finite, do not collapse into one point, and show stable cohesion across fixed seeds.
+
+Current implementation: `particle_prototype.py` provides periodic spatial bins, minimum-image neighbors, short-range repulsion, medium-range attraction, overdamped force motion, drag, mobility, and deterministic seeded worlds. It is intentionally separate from the field engine until stability and coupling tests pass.
 
 ### 1.2 Overdamped particle motion
 
