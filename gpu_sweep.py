@@ -160,13 +160,13 @@ class GpuParticleBatch:
         self.cp = load_cupy()
         worlds = []
         for job in jobs:
-            world = HybridParticleWorld.seeded(seed=job["seed"], count=max(16, job["body_patches"] * 12))
-            world.metabolism = job["metabolism"]
-            world.body_yield = job["body_yield"]
-            world.resource_regrowth = job["resource_regrowth"]
-            world.resource_capacity = job["resource_capacity"]
+            world = HybridParticleWorld.seeded(seed=job["seed"], count=max(16, int(job.get("body_patches", 5)) * 12))
+            world.metabolism = job.get("metabolism", 0.035)
+            world.body_yield = job.get("body_yield", 0.72)
+            world.resource_regrowth = job.get("resource_regrowth", 0.01)
+            world.resource_capacity = job.get("resource_capacity", 1.0)
             world.waste_decay = 0.0
-            world.particle.masses[:] = max(0.05, job["body_strength"] / 2.0)
+            world.particle.masses[:] = max(0.05, job.get("body_strength", 1.5) / 2.0)
             worlds.append(world)
         cp = self.cp
         self.jobs = jobs
@@ -181,7 +181,9 @@ class GpuParticleBatch:
         self.initial_mass = cp.sum(self.masses, axis=1, dtype=cp.float64) + cp.sum(self.resource + self.waste, axis=(1, 2), dtype=cp.float64)
         self.external = cp.zeros(len(jobs), dtype=cp.float64)
         self.batch_index = cp.arange(len(jobs))[:, None]
-        self.params = {name: cp.asarray([job[name] for job in jobs], dtype=cp.float64) for name in
+        defaults = {"metabolism": 0.035, "body_yield": 0.72, "decay_rate": 0.0005,
+                    "resource_regrowth": 0.01, "resource_capacity": 1.0}
+        self.params = {name: cp.asarray([job.get(name, defaults[name]) for job in jobs], dtype=cp.float64) for name in
                        ("metabolism", "body_yield", "decay_rate", "resource_regrowth", "resource_capacity")}
 
     def _scatter(self, rows, columns, values):

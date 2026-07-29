@@ -17,12 +17,13 @@ PARAMETERS = {
     "resource_regrowth": (0.001, 0.05),
     "body_strength": (0.25, 3.0),
     "resource_capacity": (0.25, 3.0),
+    "body_patches": (2, 10),
 }
 INTEGER_PARAMETERS = {"resource_patches", "body_patches", "seed_interval"}
 LABEL_RE = re.compile(r"yield=([0-9.eE+-]+),\s*decay=([0-9.eE+-]+)")
 DEFAULTS = {
     "metabolism": 0.035, "resource_regrowth": 0.01, "body_strength": 1.5,
-    "resource_capacity": 1.0,
+    "resource_capacity": 1.0, "body_patches": 5,
 }
 
 
