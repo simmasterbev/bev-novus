@@ -34,7 +34,7 @@ class ExperimentApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("Bev Novus experiment runner")
-        self.geometry("1080x680")
+        self.geometry("1180x760")
         self.results: list[dict] = []
         self.stop_event = threading.Event()
         self.worker: threading.Thread | None = None
@@ -55,6 +55,14 @@ class ExperimentApp(tk.Tk):
         self.visual_filter: set[str] | None = None
         self.visual_scale = 2
         self.adaptive_configs: list[dict] | None = None
+        self.adaptive_campaign_active = False
+        self.adaptive_generation = 0
+        self.adaptive_generation_total = 0
+        self.adaptive_config_count = 24
+        self.adaptive_elite_count = 6
+        self.adaptive_source_path: Path | None = None
+        self.run_started_at = 0.0
+        self.eta_text = tk.StringVar(value="ETA: -")
         self._build()
 
     def _help(self, widget: tk.Widget, text: str) -> None:
@@ -62,15 +70,16 @@ class ExperimentApp(tk.Tk):
         widget.bind("<FocusIn>", lambda _event: self.help_text.set(text))
 
     def _build(self) -> None:
-        controls = ttk.LabelFrame(self, text="Experiment grid")
-        controls.pack(fill="x", padx=10, pady=10)
-        specs = [
-            ("Seeds", "1,2,3"), ("Steps", "200000"),
-            ("Body yield", "0.30,0.40,0.50"), ("Decay", "0.02,0.03,0.04"),
-            ("Particle decay", "0.0005,0.001,0.002"),
-            ("Sample every", "1000"), ("Workers", "3"), ("Broad configs", "256"),
-            ("GPU screen steps", "20000"), ("GPU batch", "64"), ("Replay top", "8"),
-        ]
+        settings = ttk.Notebook(self)
+        settings.pack(fill="x", padx=10, pady=(10, 6))
+        field_specs = {
+            "Core": [("Seeds", "1,2,3"), ("Steps", "200000"), ("Body yield", "0.30,0.40,0.50"),
+                     ("Decay", "0.02,0.03,0.04"), ("Particle decay", "0.0005,0.001,0.002"),
+                     ("Sample every", "1000")],
+            "Performance": [("Workers", "3"), ("Broad configs", "256"), ("GPU screen steps", "20000"),
+                            ("GPU batch", "64"), ("Replay top", "8")],
+            "Adaptive": [("Adaptive generations", "1"), ("Adaptive configs", "24"), ("Adaptive elites", "6")],
+        }
         explanations = {
             "Seeds": "Comma-separated random seeds. Reusing a seed makes conditions reproducible.",
             "Steps": "Number of simulation steps for each run. Larger values reveal longer-term persistence but take longer.",
@@ -83,22 +92,28 @@ class ExperimentApp(tk.Tk):
             "GPU screen steps": "Short screening horizon for GPU runs before the strongest configurations are replayed on CPU.",
             "GPU batch": "Number of GPU worlds advanced together. Larger batches can improve throughput if GPU memory allows.",
             "Replay top": "Number of top GPU-screened configurations replayed for the full Steps duration.",
+            "Adaptive generations": "Number of automatic result-to-next-run iterations. Each generation is scored, perturbed, and run again.",
+            "Adaptive configs": "Number of parameter configurations generated per adaptive generation.",
+            "Adaptive elites": "Number of top configurations copied unchanged into each next generation.",
         }
-        for index, (label, default) in enumerate(specs):
-            row, column = divmod(index, 3)
-            ttk.Label(controls, text=label).grid(row=row * 2, column=column, sticky="w", padx=8, pady=(8, 0))
-            variable = tk.StringVar(value=default)
-            self.fields[label] = variable
-            entry = ttk.Entry(controls, textvariable=variable, width=22)
-            entry.grid(row=row * 2 + 1, column=column, sticky="ew", padx=8, pady=(0, 8))
-            self._help(entry, explanations[label])
-        for column in range(3):
-            controls.columnconfigure(column, weight=1)
+        for tab_name, specs in field_specs.items():
+            tab = ttk.Frame(settings, padding=6)
+            settings.add(tab, text=tab_name)
+            for index, (label, default) in enumerate(specs):
+                row, column = divmod(index, 3)
+                ttk.Label(tab, text=label).grid(row=row * 2, column=column, sticky="w", padx=8, pady=(3, 0))
+                variable = tk.StringVar(value=default)
+                self.fields[label] = variable
+                entry = ttk.Entry(tab, textvariable=variable, width=22)
+                entry.grid(row=row * 2 + 1, column=column, sticky="ew", padx=8, pady=(0, 3))
+                self._help(entry, explanations[label])
+            for column in range(3):
+                tab.columnconfigure(column, weight=1)
 
-        options = ttk.Frame(self)
-        options.pack(fill="x", padx=10)
-        ttk.Label(options, text="Engine").pack(side="left", padx=(0, 4))
-        engine_box = ttk.Combobox(options, textvariable=self.engine, values=("Field", "Particle hybrid"), state="readonly", width=16)
+        rules = ttk.LabelFrame(self, text="Engine and rules")
+        rules.pack(fill="x", padx=10, pady=(0, 6))
+        ttk.Label(rules, text="Engine").pack(side="left", padx=(8, 4))
+        engine_box = ttk.Combobox(rules, textvariable=self.engine, values=("Field", "Particle hybrid"), state="readonly", width=16)
         engine_box.pack(side="left", padx=(0, 12))
         self._help(engine_box, "Simulation engine. Field runs use the established grid model; Particle hybrid runs use force-bearing particles coupled to resource and waste fields.")
         self.reproduce = tk.BooleanVar(value=True)
@@ -107,7 +122,7 @@ class ExperimentApp(tk.Tk):
         self.spatial = tk.BooleanVar(value=True)
         for label, variable in (("Seed emission", self.reproduce), ("Mutation", self.mutate),
                                 ("Recycling", self.recycle), ("Spatial resources", self.spatial)):
-            checkbox = ttk.Checkbutton(options, text=label, variable=variable)
+            checkbox = ttk.Checkbutton(rules, text=label, variable=variable)
             checkbox.pack(side="left", padx=(0, 14))
             self._help(checkbox, {
                 "Seed emission": "Allow the field engine to emit new seed bodies. Particle hybrid reproduction is not implemented yet.",
@@ -115,37 +130,50 @@ class ExperimentApp(tk.Tk):
                 "Recycling": "Return recyclable waste to the resource pool instead of leaving it unavailable.",
                 "Spatial resources": "Keep resource patches spatially localized. Turning this off creates a well-mixed resource control.",
             }[label])
-        live_check = ttk.Checkbutton(options, text="Live previews", variable=self.live_previews, command=self._toggle_live_previews)
+        live_check = ttk.Checkbutton(rules, text="Live previews", variable=self.live_previews, command=self._toggle_live_previews)
         live_check.pack(side="left", padx=(0, 8))
         self._help(live_check, "Show periodically refreshed images for active runs. This adds disk and GUI work; many simultaneous previews can cause extreme lag.")
-        ttk.Label(options, textvariable=self.live_warning).pack(side="left", padx=(0, 8))
-        self.start_button = ttk.Button(options, text="Run grid", command=self.start)
-        self.start_button.pack(side="left", padx=8)
+        ttk.Label(rules, textvariable=self.live_warning).pack(side="left", padx=(0, 8))
+
+        actions = ttk.Frame(self)
+        actions.pack(fill="x", padx=10, pady=(0, 4))
+        run_actions = ttk.LabelFrame(actions, text="Run")
+        run_actions.pack(side="left", fill="x", expand=True, padx=(0, 5))
+        campaign_actions = ttk.LabelFrame(actions, text="Campaigns")
+        campaign_actions.pack(side="left", fill="x", expand=True, padx=(5, 0))
+        self.start_button = ttk.Button(run_actions, text="Run grid", command=self.start)
+        self.start_button.pack(side="left", padx=6, pady=5)
         self._help(self.start_button, "Run the Cartesian product of the selected seeds and parameter values in parallel.")
-        self.broad_button = ttk.Button(options, text="Broad sweep", command=lambda: self.start(broad=True))
-        self.broad_button.pack(side="left")
+        self.broad_button = ttk.Button(run_actions, text="Broad sweep", command=lambda: self.start(broad=True))
+        self.broad_button.pack(side="left", padx=6, pady=5)
         self._help(self.broad_button, "Generate a broad Latin-hypercube sample across the major rules and run it in parallel.")
-        self.gpu_button = ttk.Button(options, text="GPU screen + replay", command=self.start_gpu)
-        self.gpu_button.pack(side="left", padx=8)
+        self.gpu_button = ttk.Button(campaign_actions, text="GPU screen + replay", command=self.start_gpu)
+        self.gpu_button.pack(side="left", padx=5, pady=5)
         self._help(self.gpu_button, "Screen many configurations on the GPU, then replay the strongest candidates with the full experiment settings.")
-        self.overnight_button = ttk.Button(options, text="Overnight campaign", command=self.start_overnight)
-        self.overnight_button.pack(side="left")
+        self.overnight_button = ttk.Button(campaign_actions, text="Overnight", command=self.start_overnight)
+        self.overnight_button.pack(side="left", padx=5, pady=5)
         self._help(self.overnight_button, "Load the long-running campaign preset and start GPU screening plus replay.")
-        self.particle_campaign_button = ttk.Button(options, text="Particle persistence", command=self.start_particle_campaign)
-        self.particle_campaign_button.pack(side="left", padx=8)
+        self.particle_campaign_button = ttk.Button(campaign_actions, text="Particle persistence", command=self.start_particle_campaign)
+        self.particle_campaign_button.pack(side="left", padx=5, pady=5)
         self._help(self.particle_campaign_button, "Run 96 particle-hybrid persistence conditions: 8 seeds, 3 body yields, and 4 low-decay values for 200,000 steps.")
-        self.stop_button = ttk.Button(options, text="Stop", command=self.stop, state="disabled")
-        self.stop_button.pack(side="left")
+        self.adaptive_campaign_button = ttk.Button(campaign_actions, text="Adaptive campaign", command=self.start_adaptive_campaign)
+        self.adaptive_campaign_button.pack(side="left", padx=5, pady=5)
+        self._help(self.adaptive_campaign_button, "Run the configured number of adaptive generations automatically from a selected result report.")
+        self.stop_button = ttk.Button(run_actions, text="Stop", command=self.stop, state="disabled")
+        self.stop_button.pack(side="left", padx=6, pady=5)
         self._help(self.stop_button, "Request a safe stop after the current worker results finish reporting.")
-        export_button = ttk.Button(options, text="Export results", command=self.export)
-        export_button.pack(side="left", padx=8)
+        export_button = ttk.Button(run_actions, text="Export", command=self.export)
+        export_button.pack(side="left", padx=6, pady=5)
         self._help(export_button, "Save the currently displayed results or GPU report as a JSON file.")
-        adaptive_button = ttk.Button(options, text="Adaptive next config", command=self.load_adaptive_config)
-        adaptive_button.pack(side="left", padx=8)
+        adaptive_button = ttk.Button(campaign_actions, text="Load adaptive", command=self.load_adaptive_config)
+        adaptive_button.pack(side="left", padx=5, pady=5)
         self._help(adaptive_button, "Read a previous result report, generate a bounded next-generation parameter sweep, and load its defaults into this GUI.")
         ttk.Label(self, textvariable=self.help_text, relief="groove", anchor="w", justify="left", wraplength=1040).pack(fill="x", padx=10, pady=(4, 6))
         self.status = tk.StringVar(value="Ready")
-        ttk.Label(options, textvariable=self.status).pack(side="right")
+        status_row = ttk.Frame(self)
+        status_row.pack(fill="x", padx=10, pady=(0, 3))
+        ttk.Label(status_row, textvariable=self.status, anchor="w").pack(side="left", fill="x", expand=True)
+        ttk.Label(status_row, textvariable=self.eta_text, anchor="e").pack(side="right")
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=1, value=0)
         self.progress.pack(fill="x", padx=10, pady=(0, 6))
 
@@ -270,6 +298,8 @@ class ExperimentApp(tk.Tk):
                 job["live_snapshot_every"] = max(25, min(250, int(self.fields["Sample every"].get())))
                 self._add_live_card(str(snapshot_path), index, job["label"], job["seed"], job["live_snapshot_every"])
         self.stop_event.clear()
+        self.adaptive_campaign_active = False
+        self.run_started_at = time.perf_counter()
         self.total_jobs = len(jobs)
         self.completed_jobs = 0
         self.view_status.set(f"{len(jobs)} simulations loaded • waiting for first frames")
@@ -279,6 +309,7 @@ class ExperimentApp(tk.Tk):
         self.gpu_button.configure(state="disabled")
         self.overnight_button.configure(state="disabled")
         self.particle_campaign_button.configure(state="disabled")
+        self.adaptive_campaign_button.configure(state="disabled")
         self.stop_button.configure(state="normal")
         self.status.set(f"Running 0/{len(jobs)} — {workers} parallel workers — generating results")
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
@@ -296,6 +327,7 @@ class ExperimentApp(tk.Tk):
             build_next_config(path, output)
             config = json.loads(output.read_text(encoding="utf-8"))
             self.adaptive_configs = config.get("configs") or None
+            self.adaptive_campaign_active = False
             defaults = config.get("gui_defaults", {})
             for name, value in defaults.items():
                 if name in self.fields:
@@ -309,8 +341,60 @@ class ExperimentApp(tk.Tk):
         if self.live_previews.get():
             self._refresh_live_previews()
 
+    def start_adaptive_campaign(self) -> None:
+        try:
+            generations = int(self.fields["Adaptive generations"].get())
+            count = int(self.fields["Adaptive configs"].get())
+            elites = int(self.fields["Adaptive elites"].get())
+            if generations < 1 or count < 1 or elites < 1 or elites > count:
+                raise ValueError("Adaptive generations/configs must be positive and elites cannot exceed configs.")
+        except (TypeError, ValueError) as error:
+            messagebox.showerror("Invalid adaptive setup", str(error))
+            return
+        chosen = filedialog.askopenfilename(
+            title="Choose starting result report", filetypes=(("JSON", "*.json"), ("All files", "*.*")))
+        if not chosen:
+            return
+        try:
+            output = Path(__file__).with_name("Results") / "adaptive-next.json"
+            config = build_next_config(Path(chosen), output, count=count, elite_count=elites, seed=7)
+            self.adaptive_configs = config["configs"]
+            self.adaptive_campaign_active = True
+            self.adaptive_generation = int(config["generation"])
+            self.adaptive_generation_total = generations
+            self.adaptive_config_count = count
+            self.adaptive_elite_count = elites
+            self.adaptive_source_path = Path(chosen)
+            self.engine.set("Particle hybrid")
+            self.live_previews.set(False)
+            self._toggle_live_previews()
+            self.run_started_at = time.perf_counter()
+            self.help_text.set(f"Adaptive campaign loaded from {Path(chosen).name}; generation {self.adaptive_generation}/{generations} is ready.")
+            self.start_gpu_particle()
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            messagebox.showerror("Adaptive campaign error", str(error))
+
     def _toggle_live_previews(self) -> None:
         self.live_warning.set("WARNING: live previews add rendering and file I/O; many runs at once can cause extreme lag." if self.live_previews.get() else "Live previews off - lowest overhead mode.")
+
+    @staticmethod
+    def _duration(seconds: float) -> str:
+        seconds = max(0, int(seconds))
+        if seconds < 60:
+            return f"{seconds}s"
+        minutes, remainder = divmod(seconds, 60)
+        if minutes < 60:
+            return f"{minutes}m {remainder:02d}s"
+        hours, minutes = divmod(minutes, 60)
+        return f"{hours}h {minutes:02d}m"
+
+    def _update_eta(self, done: float, total: float) -> None:
+        if not self.run_started_at or done <= 0 or total <= done:
+            self.eta_text.set("ETA: calculating..." if done <= 0 else "ETA: <1s")
+            return
+        elapsed = time.perf_counter() - self.run_started_at
+        remaining = elapsed * (total - done) / done
+        self.eta_text.set(f"ETA: {self._duration(remaining)}")
 
     def _add_run_row(self, path: str, index: int, label: str, seed: int, state: str = "QUEUED") -> None:
         iid = f"run-{index:04d}"
@@ -476,11 +560,12 @@ class ExperimentApp(tk.Tk):
         for child in self.visual_inner.winfo_children():
             child.destroy()
         self.stop_event.clear()
+        self.run_started_at = time.perf_counter()
         self.gpu_screen_total = config_count * len(seeds)
         self.total_jobs = self.gpu_screen_total + replay_top * len(seeds)
         self.progress.configure(maximum=self.total_jobs, value=0)
         self.start_button.configure(state="disabled"); self.broad_button.configure(state="disabled")
-        self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled"); self.particle_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
+        self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled"); self.particle_campaign_button.configure(state="disabled"); self.adaptive_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
         self.status.set(f"Preparing {self.gpu_screen_total} GPU screens")
         configs = latin_hypercube(config_count, seed=7)
         output = Path(__file__).with_name("Results") / "gpu-snapshots"
@@ -501,6 +586,7 @@ class ExperimentApp(tk.Tk):
 
     def start_particle_campaign(self) -> None:
         self.adaptive_configs = None
+        self.adaptive_campaign_active = False
         preset = {
             "Seeds": "1,2,3,4,5,6,7,8",
             "Steps": "200000",
@@ -514,6 +600,7 @@ class ExperimentApp(tk.Tk):
         self.engine.set("Particle hybrid")
         self.live_previews.set(False)
         self._toggle_live_previews()
+        self.run_started_at = time.perf_counter()
         self.start_gpu_particle()
 
     def start_gpu_particle(self) -> None:
@@ -541,7 +628,7 @@ class ExperimentApp(tk.Tk):
         self.progress.configure(maximum=self.total_jobs, value=0)
         self.start_button.configure(state="disabled"); self.broad_button.configure(state="disabled")
         self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled")
-        self.particle_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
+        self.particle_campaign_button.configure(state="disabled"); self.adaptive_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
         self.status.set(f"GPU particle campaign: {len(jobs)} worlds in batches of {batch_size}")
         self.worker = threading.Thread(target=self._run_gpu_particle, args=(jobs, int(self.fields["Steps"].get()), batch_size, output), daemon=True)
         self.worker.start()
@@ -555,18 +642,54 @@ class ExperimentApp(tk.Tk):
             self.after(0, self.gpu_particle_failed, str(error))
 
     def gpu_particle_progress(self, _stage: str, done: int, total: int, message: str) -> None:
-        self.after(0, lambda: (self.progress.configure(value=done), self.status.set(f"{message}: {done}/{total}")))
+        def update() -> None:
+            self.progress.configure(value=done)
+            if self.adaptive_campaign_active:
+                overall_done = (self.adaptive_generation - 1) * total + done
+                overall_total = self.adaptive_generation_total * total
+                self.status.set(f"Adaptive generation {self.adaptive_generation}/{self.adaptive_generation_total} - {message}: {done:.0f}/{total}")
+                self._update_eta(overall_done, overall_total)
+            else:
+                self.status.set(f"{message}: {done:.0f}/{total}")
+                self._update_eta(done, total)
+        self.after(0, update)
 
     def add_gpu_particle_report(self, report: dict) -> None:
         self.particle_gpu_report = report
         report_path = Path(__file__).with_name("Results") / "gui-particle-gpu-latest.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         self.results = report["results"]
         for completed, result in enumerate(self.results, 1):
             self.add_result(result, completed, self.total_jobs)
+        if self.adaptive_campaign_active:
+            campaign_dir = report_path.parent / "adaptive-campaign"
+            campaign_dir.mkdir(parents=True, exist_ok=True)
+            generation_path = campaign_dir / f"generation-{self.adaptive_generation:04d}.json"
+            generation_report = {**report, "generation": self.adaptive_generation}
+            generation_path.write_text(json.dumps(generation_report, indent=2), encoding="utf-8")
+            if self.adaptive_generation < self.adaptive_generation_total and not self.stop_event.is_set():
+                self.status.set(f"Generation {self.adaptive_generation}/{self.adaptive_generation_total} complete - preparing next generation")
+                self.after(100, self._start_next_adaptive_generation, generation_path)
+                return
+            self.adaptive_campaign_active = False
         self.finished(len(self.results), self.total_jobs)
 
+    def _start_next_adaptive_generation(self, report_path: Path) -> None:
+        try:
+            output = Path(__file__).with_name("Results") / "adaptive-next.json"
+            config = build_next_config(report_path, output, count=self.adaptive_config_count,
+                                       elite_count=self.adaptive_elite_count, seed=7 + self.adaptive_generation)
+            self.adaptive_configs = config["configs"]
+            self.adaptive_generation = int(config["generation"])
+            self.adaptive_source_path = report_path
+            self.start_gpu_particle()
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            self.adaptive_campaign_active = False
+            self.gpu_particle_failed(f"Could not prepare adaptive generation: {error}")
+
     def gpu_particle_failed(self, error: str) -> None:
+        self.adaptive_campaign_active = False
         self.finished(int(self.progress["value"]), self.total_jobs)
         messagebox.showerror("GPU particle campaign failed", error)
 
@@ -581,7 +704,8 @@ class ExperimentApp(tk.Tk):
     def gpu_progress(self, stage: str, done: int, total: int, message: str) -> None:
         value = done if stage == "gpu" else self.gpu_screen_total + done
         self.after(0, lambda: (self.progress.configure(value=value),
-                               self.status.set(f"{message}: {done}/{total}")))
+                               self.status.set(f"{message}: {done:.0f}/{total}"),
+                               self._update_eta(value, self.total_jobs)))
 
     def add_gpu_report(self, report: dict) -> None:
         self.gpu_report = report
@@ -647,6 +771,7 @@ class ExperimentApp(tk.Tk):
             self._set_run_row(snapshot, "COMPLETE", result)
             card["meta"].configure(text=f'{card["run"]} - {result["label"]} - seed {result["seed"]}\nCOMPLETE - {result["live"]} live')
         self.progress.configure(value=completed)
+        self._update_eta(completed, total)
         self.status.set(f"Results generated: {completed}/{total} — {total - completed} remaining")
 
     def finished(self, completed: int, total: int) -> None:
@@ -655,8 +780,10 @@ class ExperimentApp(tk.Tk):
         self.gpu_button.configure(state="normal")
         self.overnight_button.configure(state="normal")
         self.particle_campaign_button.configure(state="normal")
+        self.adaptive_campaign_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.progress.configure(value=completed)
+        self.eta_text.set("ETA: stopped" if self.stop_event.is_set() else "ETA: complete")
         self.status.set("Stopped" if self.stop_event.is_set() else f"Finished — {completed}/{total} results generated")
         self.view_status.set(f"{len(self.live_cards)} simulations • {completed}/{total} {'stopped' if self.stop_event.is_set() else 'complete'}")
 
