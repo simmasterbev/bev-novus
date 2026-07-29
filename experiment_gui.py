@@ -48,6 +48,10 @@ class ExperimentApp(tk.Tk):
         self.live_warning = tk.StringVar(value="Live previews off - lowest overhead mode.")
         self.live_cards: dict[str, dict] = {}
         self.live_images: dict[str, tk.PhotoImage] = {}
+        self.run_rows: dict[str, str] = {}
+        self.row_paths: dict[str, str] = {}
+        self.visual_filter: set[str] | None = None
+        self.visual_scale = 2
         self._build()
 
     def _help(self, widget: tk.Widget, text: str) -> None:
@@ -139,17 +143,40 @@ class ExperimentApp(tk.Tk):
         self.progress = ttk.Progressbar(self, mode="determinate", maximum=1, value=0)
         self.progress.pack(fill="x", padx=10, pady=(0, 6))
 
-        visual_frame = ttk.LabelFrame(self, text="Live run view")
-        visual_frame.pack(fill="both", expand=True, padx=10, pady=(8, 10))
+        self.workspace = ttk.Notebook(self)
+        self.workspace.pack(fill="both", expand=True, padx=10, pady=(8, 10))
+
+        runs_frame = ttk.Frame(self.workspace)
+        self.workspace.add(runs_frame, text="Runs")
+        columns = ("run", "condition", "seed", "state", "live", "births", "viable")
+        self.run_table = ttk.Treeview(runs_frame, columns=columns, show="headings", selectmode="extended")
+        headings = {"run": "Run", "condition": "Condition", "seed": "Seed", "state": "State", "live": "Live", "births": "Births", "viable": "Viable"}
+        for column in columns:
+            self.run_table.heading(column, text=headings[column])
+            self.run_table.column(column, width=240 if column == "condition" else 75, anchor="center")
+        self.run_table.column("state", width=110)
+        self.run_table.pack(fill="both", expand=True)
+        self.run_table.bind("<<TreeviewSelect>>", self._on_run_selection)
+        self.run_table.bind("<Double-1>", lambda _event: self.focus_selected())
+
+        visual_frame = ttk.Frame(self.workspace)
+        self.visual_frame = visual_frame
+        self.workspace.add(visual_frame, text="Visual explorer")
+        visual_tools = ttk.Frame(visual_frame)
+        visual_tools.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(6, 2))
+        ttk.Button(visual_tools, text="All visuals", command=self.show_all_visuals).pack(side="left")
+        ttk.Button(visual_tools, text="Focus selected", command=self.focus_selected).pack(side="left", padx=6)
+        ttk.Button(visual_tools, text="Compare selected", command=self.compare_selected).pack(side="left")
+        ttk.Label(visual_tools, text="Select one run to focus or 2-4 runs to compare.").pack(side="left", padx=10)
         self.view_status = tk.StringVar(value="No runs yet")
-        ttk.Label(visual_frame, textvariable=self.view_status, anchor="w").grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(6, 2))
-        visual_frame.rowconfigure(1, weight=1)
+        ttk.Label(visual_frame, textvariable=self.view_status, anchor="w").grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(2, 2))
+        visual_frame.rowconfigure(2, weight=1)
         visual_frame.columnconfigure(0, weight=1)
         self.visual_canvas = tk.Canvas(visual_frame, background="black", highlightthickness=0)
         scrollbar = ttk.Scrollbar(visual_frame, orient="vertical", command=self.visual_canvas.yview)
         self.visual_canvas.configure(yscrollcommand=scrollbar.set)
-        self.visual_canvas.grid(row=1, column=0, sticky="nsew")
-        scrollbar.grid(row=1, column=1, sticky="ns")
+        self.visual_canvas.grid(row=2, column=0, sticky="nsew")
+        scrollbar.grid(row=2, column=1, sticky="ns")
         self.visual_inner = ttk.Frame(self.visual_canvas)
         self.visual_window = self.visual_canvas.create_window((8, 8), window=self.visual_inner, anchor="nw")
         self.visual_inner.bind("<Configure>", lambda _: self.visual_canvas.configure(scrollregion=self.visual_canvas.bbox("all")))
@@ -207,13 +234,16 @@ class ExperimentApp(tk.Tk):
         self.gpu_report = None
         for child in self.visual_inner.winfo_children():
             child.destroy()
-        self.live_cards.clear(); self.live_images.clear()
+        self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
+        self.run_table.delete(*self.run_table.get_children())
+        self.visual_filter = None; self.visual_scale = 2
         snapshot_dir = Path(__file__).with_name("Results") / "gui-snapshots"
         snapshot_dir.mkdir(parents=True, exist_ok=True)
         for index, job in enumerate(jobs, 1):
             snapshot_path = snapshot_dir / f"run-{index:04d}.ppm"
             snapshot_path.unlink(missing_ok=True)
             job["snapshot_path"] = str(snapshot_path)
+            self._add_run_row(str(snapshot_path), index, job["label"], job["seed"])
             if self.live_previews.get():
                 job["live_snapshot_path"] = str(snapshot_path)
                 job["live_snapshot_every"] = max(25, min(250, int(self.fields["Sample every"].get())))
@@ -238,22 +268,83 @@ class ExperimentApp(tk.Tk):
     def _toggle_live_previews(self) -> None:
         self.live_warning.set("WARNING: live previews add rendering and file I/O; many runs at once can cause extreme lag." if self.live_previews.get() else "Live previews off - lowest overhead mode.")
 
+    def _add_run_row(self, path: str, index: int, label: str, seed: int, state: str = "QUEUED") -> None:
+        iid = f"run-{index:04d}"
+        self.run_rows[path] = iid
+        self.row_paths[iid] = path
+        self.run_table.insert("", "end", iid=iid, values=(f"RUN {index:04d}", label, seed, state, "", "", ""))
+
+    def _set_run_row(self, path: str, state: str, result: dict | None = None) -> None:
+        iid = self.run_rows.get(path)
+        if not iid:
+            return
+        values = list(self.run_table.item(iid, "values"))
+        values[3] = state
+        if result:
+            values[4:7] = (result.get("live", ""), result.get("births", ""), result.get("viable", ""))
+        self.run_table.item(iid, values=values)
+
+    def _selected_paths(self) -> list[str]:
+        return [self.row_paths[iid] for iid in self.run_table.selection() if iid in self.row_paths]
+
+    def _on_run_selection(self, _event=None) -> None:
+        selected = self._selected_paths()
+        for path, card in self.live_cards.items():
+            card["card"].configure(relief="sunken" if path in selected else "ridge")
+
+    def _select_path(self, path: str, focus: bool = False) -> None:
+        iid = self.run_rows.get(path)
+        if iid:
+            self.run_table.selection_set(iid)
+            self.run_table.focus(iid)
+            self.run_table.see(iid)
+        if focus:
+            self.focus_selected()
+
+    def show_all_visuals(self) -> None:
+        self.visual_filter = None
+        self.visual_scale = 2
+        self.workspace.select(self.visual_frame)
+        self._relayout_live_cards()
+
+    def focus_selected(self) -> None:
+        selected = self._selected_paths()
+        if not selected:
+            messagebox.showinfo("Choose a run", "Select one run in the Runs tab first.")
+            return
+        self.visual_filter = {selected[0]}
+        self.visual_scale = 5
+        self.workspace.select(self.visual_frame)
+        self._relayout_live_cards()
+
+    def compare_selected(self) -> None:
+        selected = self._selected_paths()[:4]
+        if len(selected) < 2:
+            messagebox.showinfo("Choose runs", "Select 2 to 4 runs in the Runs tab to compare.")
+            return
+        self.visual_filter = set(selected)
+        self.visual_scale = 3
+        self.workspace.select(self.visual_frame)
+        self._relayout_live_cards()
+
     def _refresh_live_previews(self) -> None:
         now = time.time()
         refreshing = 0
         for path, card in self.live_cards.items():
             if not Path(path).exists():
+                self._set_run_row(path, "QUEUED")
                 card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nQUEUED • waiting for first frame')
                 continue
             try:
                 mtime = Path(path).stat().st_mtime_ns
                 if mtime != card["mtime"]:
-                    image = tk.PhotoImage(file=path).zoom(2, 2)
+                    image = tk.PhotoImage(file=path).zoom(self.visual_scale, self.visual_scale)
                     self.live_images[path] = image
                     card["image"].configure(image=image)
                     card["mtime"] = mtime
                     card["updated"] = now
                     card["frames"] += 1
+                    self._set_run_row(path, "UPDATING")
                     step = card["frames"] * card["interval"]
                     card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nUPDATING • frame {card["frames"]} • step ~{step:,} • {time.strftime("%H:%M:%S")}')
                 if now - card["updated"] < 1.5:
@@ -261,9 +352,11 @@ class ExperimentApp(tk.Tk):
                 elif card["state"] == "running":
                     age = now - card["updated"]
                     state = "STALE" if age > 3 else "LIVE"
+                    self._set_run_row(path, state)
                     step = card["frames"] * card["interval"]
                     card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\n{state} • frame {card["frames"]} • step ~{step:,} • {age:.1f}s ago')
             except (tk.TclError, OSError) as error:
+                self._set_run_row(path, "READ ERROR")
                 card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nFRAME READ ERROR • {str(error)[:90]}')
         if self.live_cards:
             self.view_status.set(f"{len(self.live_cards)} simulations • {refreshing} updating now")
@@ -279,14 +372,28 @@ class ExperimentApp(tk.Tk):
         self.live_cards[path] = {"card": card, "image": image, "meta": meta, "run": f"RUN {index:04d}",
                                  "label": label, "seed": seed, "mtime": -1, "updated": 0.0, "frames": 0,
                                  "interval": interval, "state": "running"}
+        for widget in (card, image, meta):
+            widget.bind("<Button-1>", lambda _event, selected=path: self._select_path(selected, focus=True))
         self._relayout_live_cards()
 
     def _relayout_live_cards(self, width: int | None = None) -> None:
         if not self.live_cards:
             return
         width = width or self.visual_canvas.winfo_width()
-        columns = max(1, (max(width, 260) - 24) // 250)
-        for index, record in enumerate(self.live_cards.values()):
+        tile_width = 250 if self.visual_scale == 2 else 360 if self.visual_scale == 3 else 540
+        columns = max(1, (max(width, 260) - 24) // tile_width)
+        visible = [(path, record) for path, record in self.live_cards.items()
+                   if self.visual_filter is None or path in self.visual_filter]
+        for record in self.live_cards.values():
+            record["card"].grid_remove()
+        for index, (path, record) in enumerate(visible):
+            if record["mtime"] >= 0:
+                try:
+                    image = tk.PhotoImage(file=path).zoom(self.visual_scale, self.visual_scale)
+                    self.live_images[path] = image
+                    record["image"].configure(image=image)
+                except tk.TclError:
+                    pass
             record["card"].grid(row=index // columns, column=index % columns, padx=6, pady=6, sticky="nsew")
         for column in range(columns):
             self.visual_inner.columnconfigure(column, weight=1)
@@ -316,7 +423,9 @@ class ExperimentApp(tk.Tk):
             messagebox.showerror("GPU preflight failed", str(error))
             return
         self.status.set(f"Preflight passed: {check['births']} mutation checks")
-        self.results.clear(); self.gpu_report = None; self.live_cards.clear(); self.live_images.clear()
+        self.results.clear(); self.gpu_report = None; self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
+        self.run_table.delete(*self.run_table.get_children())
+        self.visual_filter = None; self.visual_scale = 2
         for child in self.visual_inner.winfo_children():
             child.destroy()
         self.stop_event.clear()
@@ -409,25 +518,30 @@ class ExperimentApp(tk.Tk):
 
     def add_result(self, result: dict, completed: int, total: int) -> None:
         snapshot = result.get("_snapshot_path")
+        if snapshot and snapshot not in self.run_rows:
+            self._add_run_row(snapshot, len(self.run_rows) + 1, result["label"], result["seed"])
         if result.get("_error") and snapshot in self.live_cards:
             card = self.live_cards[snapshot]
             card["state"] = "error"
+            self._set_run_row(snapshot, "ERROR", result)
             card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nERROR • {result["_error"][:90]}')
             snapshot = None
         if snapshot in self.live_cards and snapshot and Path(snapshot).exists():
-            image = tk.PhotoImage(file=snapshot).zoom(2, 2)
+            image = tk.PhotoImage(file=snapshot).zoom(self.visual_scale, self.visual_scale)
             self.live_images[snapshot] = image
             self.live_cards[snapshot]["image"].configure(image=image)
             self.live_cards[snapshot]["state"] = "complete"
+            self._set_run_row(snapshot, "COMPLETE", result)
             self.live_cards[snapshot]["meta"].configure(text=f'{self.live_cards[snapshot]["run"]} • {result["label"]} • seed {result["seed"]}\nCOMPLETE • {result["live"]} live')
             snapshot = None
         if snapshot and Path(snapshot).exists():
-            image = tk.PhotoImage(file=snapshot).zoom(2, 2)
+            image = tk.PhotoImage(file=snapshot).zoom(self.visual_scale, self.visual_scale)
             self._add_live_card(snapshot, len(self.live_cards) + 1, result["label"], result["seed"])
             card = self.live_cards[snapshot]
             self.live_images[snapshot] = image
             card["image"].configure(image=image)
             card["state"] = "complete"
+            self._set_run_row(snapshot, "COMPLETE", result)
             card["meta"].configure(text=f'{card["run"]} - {result["label"]} - seed {result["seed"]}\nCOMPLETE - {result["live"]} live')
         self.progress.configure(value=completed)
         self.status.set(f"Results generated: {completed}/{total} — {total - completed} remaining")
