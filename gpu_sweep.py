@@ -257,23 +257,35 @@ def run_gpu_particle_campaign(jobs: list[dict], steps: int, batch_size: int, out
     output_dir.mkdir(parents=True, exist_ok=True)
     results = []
     started = time.perf_counter()
-    for offset in range(0, len(jobs), batch_size):
-        if stopped and stopped():
-            break
-        batch_jobs = jobs[offset:offset + batch_size]
-        batch = GpuParticleBatch(batch_jobs)
-        report_every = max(1, min(2000, steps // 100 or 1))
-        for tick in range(steps):
-            batch.step()
-            if progress and ((tick + 1) % report_every == 0 or tick + 1 == steps):
-                fraction = (tick + 1) / steps
-                progress("gpu-particle", offset + len(batch_jobs) * fraction, len(jobs),
-                         f"GPU particle batch {offset // batch_size + 1}: step {tick + 1}/{steps}")
+    # Particle count is derived from body_patches, so worlds with different counts
+    # cannot share one stacked GPU array. Grouping keeps adaptive variation valid.
+    groups = {}
+    for job in jobs:
+        groups.setdefault(int(job.get("body_patches", 5)), []).append(job)
+    completed = 0
+    batch_number = 0
+    for group_jobs in groups.values():
+        for offset in range(0, len(group_jobs), batch_size):
             if stopped and stopped():
                 break
-        results.extend(batch.results())
-        if progress:
-            progress("gpu-particle", min(offset + len(batch_jobs), len(jobs)), len(jobs), "GPU particle batch")
+            batch_jobs = group_jobs[offset:offset + batch_size]
+            batch = GpuParticleBatch(batch_jobs)
+            batch_number += 1
+            report_every = max(1, min(2000, steps // 100 or 1))
+            for tick in range(steps):
+                batch.step()
+                if progress and ((tick + 1) % report_every == 0 or tick + 1 == steps):
+                    fraction = (tick + 1) / steps
+                    progress("gpu-particle", completed + len(batch_jobs) * fraction, len(jobs),
+                             f"GPU particle batch {batch_number}: step {tick + 1}/{steps}")
+                if stopped and stopped():
+                    break
+            results.extend(batch.results())
+            completed += len(batch_jobs)
+            if progress:
+                progress("gpu-particle", min(completed, len(jobs)), len(jobs), "GPU particle batch")
+        if stopped and stopped():
+            break
     return {"backend": "gpu-particle-float64-state", "steps": steps, "batch_size": batch_size,
             "elapsed_seconds": time.perf_counter() - started, "results": results}
 
