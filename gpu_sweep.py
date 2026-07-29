@@ -172,14 +172,15 @@ class GpuParticleBatch:
         self.jobs = jobs
         self.height, self.width = worlds[0].resource.shape
         self.positions = cp.asarray(np.stack([world.particle.positions for world in worlds]), dtype=cp.float32)
-        self.masses = cp.asarray(np.stack([world.particle.masses for world in worlds]), dtype=cp.float32)
-        self.resource = cp.asarray(np.stack([world.resource for world in worlds]), dtype=cp.float32)
-        self.waste = cp.asarray(np.stack([world.waste for world in worlds]), dtype=cp.float32)
-        self.source = cp.asarray(np.stack([world.source for world in worlds]), dtype=cp.float32)
+        # Keep conserved quantities in float64; positions remain float32 for force throughput.
+        self.masses = cp.asarray(np.stack([world.particle.masses for world in worlds]), dtype=cp.float64)
+        self.resource = cp.asarray(np.stack([world.resource for world in worlds]), dtype=cp.float64)
+        self.waste = cp.asarray(np.stack([world.waste for world in worlds]), dtype=cp.float64)
+        self.source = cp.asarray(np.stack([world.source for world in worlds]), dtype=cp.float64)
         self.initial_mass = cp.sum(self.masses, axis=1, dtype=cp.float64) + cp.sum(self.resource + self.waste, axis=(1, 2), dtype=cp.float64)
         self.external = cp.zeros(len(jobs), dtype=cp.float64)
         self.batch_index = cp.arange(len(jobs))[:, None]
-        self.params = {name: cp.asarray([job[name] for job in jobs], dtype=cp.float32) for name in
+        self.params = {name: cp.asarray([job[name] for job in jobs], dtype=cp.float64) for name in
                        ("metabolism", "body_yield", "decay_rate", "resource_regrowth", "resource_capacity")}
 
     def _scatter(self, rows, columns, values):
@@ -207,7 +208,7 @@ class GpuParticleBatch:
         magnitude = cp.where(distance < 1.5, -2.0 * (1.0 - distance / 1.5), 0.8 * (1.0 - distance / 6.0))
         pair_force = cp.sum(cp.where(active[:, :, :, None], magnitude[:, :, :, None] * delta / cp.maximum(distance[:, :, :, None], 1e-9), 0.0), axis=2)
         velocity = (pair_force + field_force) / cp.maximum(self.masses[:, :, None], 1e-9)
-        self.positions = (self.positions + 0.1 * velocity) % cp.asarray((self.height, self.width), dtype=cp.float32)
+        self.positions = ((self.positions + 0.1 * velocity) % cp.asarray((self.height, self.width), dtype=cp.float64)).astype(cp.float32)
         rows = cp.rint(self.positions[:, :, 0]).astype(cp.int32) % self.height
         columns = cp.rint(self.positions[:, :, 1]).astype(cp.int32) % self.width
         available = self.resource[self.batch_index, rows, columns]
@@ -267,7 +268,7 @@ def run_gpu_particle_campaign(jobs: list[dict], steps: int, batch_size: int, out
         results.extend(batch.results())
         if progress:
             progress("gpu-particle", min(offset + len(batch_jobs), len(jobs)), len(jobs), "GPU particle batch")
-    return {"backend": "gpu-particle-float32", "steps": steps, "batch_size": batch_size,
+    return {"backend": "gpu-particle-float64-state", "steps": steps, "batch_size": batch_size,
             "elapsed_seconds": time.perf_counter() - started, "results": results}
 
 
@@ -280,7 +281,8 @@ def gpu_particle_self_test() -> dict:
         jobs = [{**config, "label": f"gpu-particle-{seed}", "seed": seed,
                  "snapshot_path": str(output / f"particle-{seed}.ppm")} for seed in (1, 2)]
         report = run_gpu_particle_campaign(jobs, 10, 2, output)
-        assert all(row["finite"] and row["live"] > 0 and Path(row["_snapshot_path"]).exists()
+        assert all(row["finite"] and row["live"] > 0 and row["mass_drift"] < 1e-6
+                   and Path(row["_snapshot_path"]).exists()
                    for row in report["results"]), report
         return report["results"][0]
 
