@@ -177,6 +177,7 @@ class GpuParticleBatch:
         self.resource = cp.asarray(np.stack([world.resource for world in worlds]), dtype=cp.float64)
         self.waste = cp.asarray(np.stack([world.waste for world in worlds]), dtype=cp.float64)
         self.source = cp.asarray(np.stack([world.source for world in worlds]), dtype=cp.float64)
+        self.domain = cp.asarray((self.height, self.width), dtype=cp.float32)
         self.initial_mass = cp.sum(self.masses, axis=1, dtype=cp.float64) + cp.sum(self.resource + self.waste, axis=(1, 2), dtype=cp.float64)
         self.external = cp.zeros(len(jobs), dtype=cp.float64)
         self.batch_index = cp.arange(len(jobs))[:, None]
@@ -200,15 +201,16 @@ class GpuParticleBatch:
         rows = cp.rint(self.positions[:, :, 0]).astype(cp.int32) % self.height
         columns = cp.rint(self.positions[:, :, 1]).astype(cp.int32) % self.width
         field_force = cp.stack((0.15 * resource_y[self.batch_index, rows, columns] - 0.15 * waste_y[self.batch_index, rows, columns],
-                                0.15 * resource_x[self.batch_index, rows, columns] - 0.15 * waste_x[self.batch_index, rows, columns]), axis=2)
+                                0.15 * resource_x[self.batch_index, rows, columns] - 0.15 * waste_x[self.batch_index, rows, columns]), axis=2).astype(cp.float32)
         delta = self.positions[:, None, :, :] - self.positions[:, :, None, :]
         delta -= cp.rint(delta / cp.asarray((self.height, self.width), dtype=cp.float32)) * cp.asarray((self.height, self.width), dtype=cp.float32)
         distance = cp.sqrt(cp.sum(delta * delta, axis=3))
         active = (distance > 1e-9) & (distance < 6.0)
         magnitude = cp.where(distance < 1.5, -2.0 * (1.0 - distance / 1.5), 0.8 * (1.0 - distance / 6.0))
         pair_force = cp.sum(cp.where(active[:, :, :, None], magnitude[:, :, :, None] * delta / cp.maximum(distance[:, :, :, None], 1e-9), 0.0), axis=2)
-        velocity = (pair_force + field_force) / cp.maximum(self.masses[:, :, None], 1e-9)
-        self.positions = ((self.positions + 0.1 * velocity) % cp.asarray((self.height, self.width), dtype=cp.float64)).astype(cp.float32)
+        mass_for_force = cp.maximum(self.masses, 1e-9).astype(cp.float32)
+        velocity = (pair_force + field_force) / mass_for_force[:, :, None]
+        self.positions = (self.positions + 0.1 * velocity) % self.domain
         rows = cp.rint(self.positions[:, :, 0]).astype(cp.int32) % self.height
         columns = cp.rint(self.positions[:, :, 1]).astype(cp.int32) % self.width
         available = self.resource[self.batch_index, rows, columns]

@@ -462,6 +462,7 @@ class ExperimentApp(tk.Tk):
             "Steps": "200000",
             "Body yield": "0.55,0.72,0.90",
             "Particle decay": "0.0001,0.00025,0.0005,0.001",
+            "GPU batch": "32",
             "Workers": "4",
         }
         for name, value in preset.items():
