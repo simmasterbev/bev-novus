@@ -6,6 +6,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 import time
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict
@@ -15,8 +16,9 @@ from typing import Callable
 import numpy as np
 
 from broad_sweep import latin_hypercube
-from experiments import run_condition
+from experiments import _write_particle_ppm, run_condition
 from morrow import World
+from particle_prototype import HybridParticleWorld
 
 
 Progress = Callable[[str, int, int, str], None]
@@ -151,6 +153,133 @@ class GpuBatch:
                  "mass_drift": float(row[3]), "screen_score": float(row[4]), "finite": bool(row[5])} for row in values]
 
 
+class GpuParticleBatch:
+    """GPU-first batch runner for the current Particle hybrid rules."""
+
+    def __init__(self, jobs: list[dict]) -> None:
+        self.cp = load_cupy()
+        worlds = []
+        for job in jobs:
+            world = HybridParticleWorld.seeded(seed=job["seed"], count=max(16, job["body_patches"] * 12))
+            world.metabolism = job["metabolism"]
+            world.body_yield = job["body_yield"]
+            world.resource_regrowth = job["resource_regrowth"]
+            world.resource_capacity = job["resource_capacity"]
+            world.waste_decay = 0.0
+            world.particle.masses[:] = max(0.05, job["body_strength"] / 2.0)
+            worlds.append(world)
+        cp = self.cp
+        self.jobs = jobs
+        self.height, self.width = worlds[0].resource.shape
+        self.positions = cp.asarray(np.stack([world.particle.positions for world in worlds]), dtype=cp.float32)
+        self.masses = cp.asarray(np.stack([world.particle.masses for world in worlds]), dtype=cp.float32)
+        self.resource = cp.asarray(np.stack([world.resource for world in worlds]), dtype=cp.float32)
+        self.waste = cp.asarray(np.stack([world.waste for world in worlds]), dtype=cp.float32)
+        self.source = cp.asarray(np.stack([world.source for world in worlds]), dtype=cp.float32)
+        self.initial_mass = cp.sum(self.masses, axis=1, dtype=cp.float64) + cp.sum(self.resource + self.waste, axis=(1, 2), dtype=cp.float64)
+        self.external = cp.zeros(len(jobs), dtype=cp.float64)
+        self.batch_index = cp.arange(len(jobs))[:, None]
+        self.params = {name: cp.asarray([job[name] for job in jobs], dtype=cp.float32) for name in
+                       ("metabolism", "body_yield", "decay_rate", "resource_regrowth", "resource_capacity")}
+
+    def _scatter(self, rows, columns, values):
+        field = self.cp.zeros_like(self.resource)
+        self.cp.add.at(field, (self.batch_index, rows, columns), values)
+        return field
+
+    def step(self) -> None:
+        cp, p = self.cp, self.params
+        regrowth = p["resource_regrowth"][:, None, None] * self.source * cp.maximum(p["resource_capacity"][:, None, None] - self.resource, 0.0)
+        self.resource += regrowth
+        self.external += cp.sum(regrowth, axis=(1, 2), dtype=cp.float64)
+        resource_y = (cp.roll(self.resource, -1, axis=1) - cp.roll(self.resource, 1, axis=1)) * 0.5
+        resource_x = (cp.roll(self.resource, -1, axis=2) - cp.roll(self.resource, 1, axis=2)) * 0.5
+        waste_y = (cp.roll(self.waste, -1, axis=1) - cp.roll(self.waste, 1, axis=1)) * 0.5
+        waste_x = (cp.roll(self.waste, -1, axis=2) - cp.roll(self.waste, 1, axis=2)) * 0.5
+        rows = cp.rint(self.positions[:, :, 0]).astype(cp.int32) % self.height
+        columns = cp.rint(self.positions[:, :, 1]).astype(cp.int32) % self.width
+        field_force = cp.stack((0.15 * resource_y[self.batch_index, rows, columns] - 0.15 * waste_y[self.batch_index, rows, columns],
+                                0.15 * resource_x[self.batch_index, rows, columns] - 0.15 * waste_x[self.batch_index, rows, columns]), axis=2)
+        delta = self.positions[:, None, :, :] - self.positions[:, :, None, :]
+        delta -= cp.rint(delta / cp.asarray((self.height, self.width), dtype=cp.float32)) * cp.asarray((self.height, self.width), dtype=cp.float32)
+        distance = cp.sqrt(cp.sum(delta * delta, axis=3))
+        active = (distance > 1e-9) & (distance < 6.0)
+        magnitude = cp.where(distance < 1.5, -2.0 * (1.0 - distance / 1.5), 0.8 * (1.0 - distance / 6.0))
+        pair_force = cp.sum(cp.where(active[:, :, :, None], magnitude[:, :, :, None] * delta / cp.maximum(distance[:, :, :, None], 1e-9), 0.0), axis=2)
+        velocity = (pair_force + field_force) / cp.maximum(self.masses[:, :, None], 1e-9)
+        self.positions = (self.positions + 0.1 * velocity) % cp.asarray((self.height, self.width), dtype=cp.float32)
+        rows = cp.rint(self.positions[:, :, 0]).astype(cp.int32) % self.height
+        columns = cp.rint(self.positions[:, :, 1]).astype(cp.int32) % self.width
+        available = self.resource[self.batch_index, rows, columns]
+        requested = p["metabolism"][:, None] * self.masses * cp.maximum(available, 0.0)
+        demand = self._scatter(rows, columns, requested)
+        fraction = cp.minimum(1.0, self.resource / cp.maximum(demand, 1e-12))
+        intake = requested * fraction[self.batch_index, rows, columns]
+        self.resource -= self._scatter(rows, columns, intake)
+        self.masses += p["body_yield"][:, None] * intake
+        self.waste += self._scatter(rows, columns, (1.0 - p["body_yield"][:, None]) * intake)
+        decay = p["decay_rate"][:, None] * self.masses
+        self.masses = cp.maximum(0.0, self.masses - decay)
+        self.waste += self._scatter(rows, columns, decay)
+
+    def results(self) -> list[dict]:
+        cp = self.cp
+        current = cp.sum(self.masses, axis=1, dtype=cp.float64) + cp.sum(self.resource + self.waste, axis=(1, 2), dtype=cp.float64)
+        values = cp.asnumpy(cp.stack((cp.count_nonzero(self.masses > 0.05, axis=1),
+                                      cp.sum(self.masses, axis=1, dtype=cp.float64),
+                                      cp.abs(current - self.initial_mass - self.external),
+                                      cp.isfinite(current)), axis=1))
+        positions, masses, resource, waste = (cp.asnumpy(value) for value in (self.positions, self.masses, self.resource, self.waste))
+        rows = []
+        for index, (job, value) in enumerate(zip(self.jobs, values)):
+            world = HybridParticleWorld.seeded(seed=job["seed"], count=len(masses[index]))
+            world.particle.positions, world.particle.masses = positions[index], masses[index]
+            world.resource, world.waste = resource[index], waste[index]
+            _write_particle_ppm(world, Path(job["snapshot_path"]))
+            live, body_mass, drift, finite = value
+            rows.append({"label": job["label"], "seed": job["seed"], "live": int(live), "births": 0, "viable": 0,
+                         "trait_diversity": 0.0, "niches": 0.0, "mass_drift": float(drift),
+                         "compactness": float(min(1.0, live / max(len(masses[index]), 1))),
+                         "boundary_ratio": 0.0, "identity_ambiguity": 0.0, "groups": 0.0,
+                         "body_mass": float(body_mass), "finite": bool(finite), "_snapshot_path": job["snapshot_path"]})
+        return rows
+
+
+def run_gpu_particle_campaign(jobs: list[dict], steps: int, batch_size: int, output_dir: Path,
+                              progress: Progress | None = None, stopped: Callable[[], bool] | None = None) -> dict:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    results = []
+    started = time.perf_counter()
+    for offset in range(0, len(jobs), batch_size):
+        if stopped and stopped():
+            break
+        batch_jobs = jobs[offset:offset + batch_size]
+        batch = GpuParticleBatch(batch_jobs)
+        for _ in range(steps):
+            batch.step()
+            if stopped and stopped():
+                break
+        results.extend(batch.results())
+        if progress:
+            progress("gpu-particle", min(offset + len(batch_jobs), len(jobs)), len(jobs), "GPU particle batch")
+    return {"backend": "gpu-particle-float32", "steps": steps, "batch_size": batch_size,
+            "elapsed_seconds": time.perf_counter() - started, "results": results}
+
+
+def gpu_particle_self_test() -> dict:
+    config = {"metabolism": 0.035, "body_yield": 0.72, "decay_rate": 0.0005,
+              "resource_regrowth": 0.01, "resource_capacity": 1.0,
+              "body_patches": 5, "body_strength": 1.5}
+    with tempfile.TemporaryDirectory() as directory:
+        output = Path(directory)
+        jobs = [{**config, "label": f"gpu-particle-{seed}", "seed": seed,
+                 "snapshot_path": str(output / f"particle-{seed}.ppm")} for seed in (1, 2)]
+        report = run_gpu_particle_campaign(jobs, 10, 2, output)
+        assert all(row["finite"] and row["live"] > 0 and Path(row["_snapshot_path"]).exists()
+                   for row in report["results"]), report
+        return report["results"][0]
+
+
 def replay_one(job: dict) -> dict:
     try:
         result = run_condition(job["label"], job["seed"], job["steps"], sample_every=job["sample_every"],
@@ -252,6 +381,7 @@ def main() -> None:
         metric = batch.correct_and_measure()[0]
         assert metric["finite"] and metric["mass_drift"] < 0.01, metric
         print(f"GPU self-test passed: {metric}")
+        print(f"GPU particle self-test passed: {gpu_particle_self_test()}")
         return
     seeds = [int(value) for value in args.seeds.split(",") if value.strip()]
     report = screen_and_replay(latin_hypercube(args.configs, 7), seeds, args.screen_steps, args.sample_every,

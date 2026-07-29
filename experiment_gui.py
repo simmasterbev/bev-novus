@@ -13,7 +13,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from broad_sweep import latin_hypercube
 from experiments import run_condition, run_particle_condition
-from gpu_sweep import screen_and_replay
+from gpu_sweep import run_gpu_particle_campaign, screen_and_replay
 from morrow import reproduction_preflight
 
 
@@ -40,6 +40,7 @@ class ExperimentApp(tk.Tk):
         self.total_jobs = 0
         self.completed_jobs = 0
         self.gpu_report: dict | None = None
+        self.particle_gpu_report: dict | None = None
         self.gpu_screen_total = 0
         self.fields: dict[str, tk.StringVar] = {}
         self.engine = tk.StringVar(value="Field")
@@ -399,6 +400,9 @@ class ExperimentApp(tk.Tk):
             self.visual_inner.columnconfigure(column, weight=1)
 
     def start_gpu(self) -> None:
+        if self.engine.get() == "Particle hybrid":
+            self.start_gpu_particle()
+            return
         if self.live_previews.get():
             self.live_warning.set("GPU screening does not publish live frames; use Run grid or Broad sweep for live previews. Replay images appear after screening completes.")
         try:
@@ -465,7 +469,61 @@ class ExperimentApp(tk.Tk):
         self.engine.set("Particle hybrid")
         self.live_previews.set(False)
         self._toggle_live_previews()
-        self.start()
+        self.start_gpu_particle()
+
+    def start_gpu_particle(self) -> None:
+        try:
+            jobs = self.jobs()
+            batch_size = max(1, int(self.fields["GPU batch"].get()))
+        except (TypeError, ValueError) as error:
+            messagebox.showerror("Invalid GPU particle setup", str(error))
+            return
+        self.results.clear(); self.gpu_report = None; self.particle_gpu_report = None
+        self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
+        self.run_table.delete(*self.run_table.get_children())
+        self.visual_filter = None; self.visual_scale = 2
+        for child in self.visual_inner.winfo_children():
+            child.destroy()
+        output = Path(__file__).with_name("Results") / "gpu-particle-snapshots"
+        output.mkdir(parents=True, exist_ok=True)
+        for index, job in enumerate(jobs, 1):
+            snapshot = output / f"particle-gpu-{index:04d}.ppm"
+            snapshot.unlink(missing_ok=True)
+            job["snapshot_path"] = str(snapshot)
+            self._add_run_row(str(snapshot), index, job["label"], job["seed"])
+        self.stop_event.clear()
+        self.total_jobs = len(jobs)
+        self.progress.configure(maximum=self.total_jobs, value=0)
+        self.start_button.configure(state="disabled"); self.broad_button.configure(state="disabled")
+        self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled")
+        self.particle_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
+        self.status.set(f"GPU particle campaign: {len(jobs)} worlds in batches of {batch_size}")
+        self.worker = threading.Thread(target=self._run_gpu_particle, args=(jobs, int(self.fields["Steps"].get()), batch_size, output), daemon=True)
+        self.worker.start()
+
+    def _run_gpu_particle(self, jobs: list[dict], steps: int, batch_size: int, output: Path) -> None:
+        try:
+            report = run_gpu_particle_campaign(jobs, steps, batch_size, output,
+                                               self.gpu_particle_progress, self.stop_event.is_set)
+            self.after(0, self.add_gpu_particle_report, report)
+        except Exception as error:
+            self.after(0, self.gpu_particle_failed, str(error))
+
+    def gpu_particle_progress(self, _stage: str, done: int, total: int, message: str) -> None:
+        self.after(0, lambda: (self.progress.configure(value=done), self.status.set(f"{message}: {done}/{total}")))
+
+    def add_gpu_particle_report(self, report: dict) -> None:
+        self.particle_gpu_report = report
+        report_path = Path(__file__).with_name("Results") / "gui-particle-gpu-latest.json"
+        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        self.results = report["results"]
+        for completed, result in enumerate(self.results, 1):
+            self.add_result(result, completed, self.total_jobs)
+        self.finished(len(self.results), self.total_jobs)
+
+    def gpu_particle_failed(self, error: str) -> None:
+        self.finished(int(self.progress["value"]), self.total_jobs)
+        messagebox.showerror("GPU particle campaign failed", error)
 
     def _run_gpu(self, configs, seeds, screen_steps, sample_every, batch_size, replay_top, replay_steps, workers, output, controls) -> None:
         try:
@@ -567,7 +625,7 @@ class ExperimentApp(tk.Tk):
             return
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=(("JSON", "*.json"), ("All files", "*.*")))
         if path:
-            exportable = self.gpu_report or [{key: value for key, value in result.items() if not key.startswith("_")} for result in self.results]
+            exportable = self.particle_gpu_report or self.gpu_report or [{key: value for key, value in result.items() if not key.startswith("_")} for result in self.results]
             Path(path).write_text(json.dumps(exportable, indent=2), encoding="utf-8")
             self.status.set(f"Saved {Path(path).name}")
 
