@@ -255,8 +255,13 @@ def run_gpu_particle_campaign(jobs: list[dict], steps: int, batch_size: int, out
             break
         batch_jobs = jobs[offset:offset + batch_size]
         batch = GpuParticleBatch(batch_jobs)
-        for _ in range(steps):
+        report_every = max(1, min(2000, steps // 100 or 1))
+        for tick in range(steps):
             batch.step()
+            if progress and ((tick + 1) % report_every == 0 or tick + 1 == steps):
+                fraction = (tick + 1) / steps
+                progress("gpu-particle", offset + len(batch_jobs) * fraction, len(jobs),
+                         f"GPU particle batch {offset // batch_size + 1}: step {tick + 1}/{steps}")
             if stopped and stopped():
                 break
         results.extend(batch.results())
