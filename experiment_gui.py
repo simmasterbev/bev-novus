@@ -12,6 +12,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from broad_sweep import latin_hypercube
+from adaptive_config import build_next_config
 from experiments import run_condition, run_particle_condition
 from gpu_sweep import run_gpu_particle_campaign, screen_and_replay
 from morrow import reproduction_preflight
@@ -53,6 +54,7 @@ class ExperimentApp(tk.Tk):
         self.row_paths: dict[str, str] = {}
         self.visual_filter: set[str] | None = None
         self.visual_scale = 2
+        self.adaptive_configs: list[dict] | None = None
         self._build()
 
     def _help(self, widget: tk.Widget, text: str) -> None:
@@ -138,6 +140,9 @@ class ExperimentApp(tk.Tk):
         export_button = ttk.Button(options, text="Export results", command=self.export)
         export_button.pack(side="left", padx=8)
         self._help(export_button, "Save the currently displayed results or GPU report as a JSON file.")
+        adaptive_button = ttk.Button(options, text="Adaptive next config", command=self.load_adaptive_config)
+        adaptive_button.pack(side="left", padx=8)
+        self._help(adaptive_button, "Read a previous result report, generate a bounded next-generation parameter sweep, and load its defaults into this GUI.")
         ttk.Label(self, textvariable=self.help_text, relief="groove", anchor="w", justify="left", wraplength=1040).pack(fill="x", padx=10, pady=(4, 6))
         self.status = tk.StringVar(value="Ready")
         ttk.Label(options, textvariable=self.status).pack(side="right")
@@ -200,6 +205,18 @@ class ExperimentApp(tk.Tk):
                      "mutate": self.mutate.get(), "recycle": self.recycle.get(),
                      "spatial": self.spatial.get(), "engine": engine, **config}
                     for index, config in enumerate(configs, 1) for seed in seeds]
+        if engine == "particle" and self.adaptive_configs:
+            jobs = []
+            for index, config in enumerate(self.adaptive_configs, 1):
+                for seed in seeds:
+                    jobs.append({
+                        "label": f"adaptive-{index:04d}", "seed": seed, "steps": steps,
+                        "body_yield": config["body_yield"], "decay_rate": config["decay_rate"],
+                        "sample_every": sample_every, "reproduce": self.reproduce.get(),
+                        "mutate": self.mutate.get(), "recycle": self.recycle.get(),
+                        "spatial": self.spatial.get(), **config, "engine": engine,
+                    })
+            return jobs
         yields = numbers(self.fields["Body yield"].get())
         decays = numbers(self.fields["Particle decay"].get() if engine == "particle" else self.fields["Decay"].get())
         jobs = []
@@ -225,6 +242,9 @@ class ExperimentApp(tk.Tk):
         return jobs
 
     def start(self, broad: bool = False) -> None:
+        if self.adaptive_configs and not broad and self.engine.get() == "Particle hybrid":
+            self.start_gpu_particle()
+            return
         try:
             jobs = self.jobs(broad)
             workers = max(1, int(self.fields["Workers"].get()))
@@ -263,6 +283,29 @@ class ExperimentApp(tk.Tk):
         self.status.set(f"Running 0/{len(jobs)} — {workers} parallel workers — generating results")
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
         self.worker.start()
+
+    def load_adaptive_config(self) -> None:
+        default = Path(__file__).with_name("Results") / "adaptive-next.json"
+        chosen = filedialog.askopenfilename(
+            title="Choose result report", filetypes=(("JSON", "*.json"), ("All files", "*.*")))
+        if not chosen:
+            return
+        path = Path(chosen)
+        try:
+            output = default
+            build_next_config(path, output)
+            config = json.loads(output.read_text(encoding="utf-8"))
+            self.adaptive_configs = config.get("configs") or None
+            defaults = config.get("gui_defaults", {})
+            for name, value in defaults.items():
+                if name in self.fields:
+                    self.fields[name].set(str(value))
+            if defaults.get("Engine"):
+                self.engine.set(defaults["Engine"])
+            self.status.set(f"Adaptive generation {config.get('generation', '?')} loaded: {len(config.get('configs', []))} configs")
+            self.help_text.set(f"Adaptive config saved to {output}. Review it, then start the next run.")
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            messagebox.showerror("Adaptive config error", str(error))
         if self.live_previews.get():
             self._refresh_live_previews()
 
@@ -457,6 +500,7 @@ class ExperimentApp(tk.Tk):
         self.start_gpu()
 
     def start_particle_campaign(self) -> None:
+        self.adaptive_configs = None
         preset = {
             "Seeds": "1,2,3,4,5,6,7,8",
             "Steps": "200000",

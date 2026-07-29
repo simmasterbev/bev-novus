@@ -241,6 +241,8 @@ class GpuParticleBatch:
             _write_particle_ppm(world, Path(job["snapshot_path"]))
             live, body_mass, drift, finite = value
             rows.append({"label": job["label"], "seed": job["seed"], "live": int(live), "births": 0, "viable": 0,
+                         "config": {name: job[name] for name in ("body_yield", "decay_rate", "metabolism",
+                                                                    "resource_regrowth", "resource_capacity", "body_strength") if name in job},
                          "trait_diversity": 0.0, "niches": 0.0, "mass_drift": float(drift),
                          "compactness": float(min(1.0, live / max(len(masses[index]), 1))),
                          "boundary_ratio": 0.0, "identity_ambiguity": 0.0, "groups": 0.0,
