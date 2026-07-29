@@ -1,5 +1,7 @@
 # Artificial Life: Integrated Context
 
+> Status: conceptual background from the original reading set. It explains why the project is shaped this way, but it is not an implementation inventory or evidence of completed milestones. Read [PROJECT_BRIEF.md](PROJECT_BRIEF.md) and [ROADMAP.md](ROADMAP.md) for current status.
+
 ## Purpose
 
 This document combines the foundational ideas in Christopher Langton's *Artificial Life*, John von Neumann's work on complicated and self-reproducing automata, Bert Chan's Lenia, the ASAL automated-search project, and Susan Stepney's framework for virtual artificial life.

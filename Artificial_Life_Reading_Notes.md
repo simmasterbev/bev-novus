@@ -1,5 +1,7 @@
 # Artificial Life Reading Notes
 
+> Status: source reading record. The design inferences here are deliberately broader than the current implementation; use [PROJECT_BRIEF.md](PROJECT_BRIEF.md) for the current build and [ROADMAP.md](ROADMAP.md) for the active evidence gates.
+
 ## Scope and reading status
 
 These notes separate what each source *actually establishes* from the design inferences we may later make from it. “Full text” means the paper or supplied excerpt was read; “abstract/repository” means the note is intentionally limited to the abstract, project documentation, or accessible excerpts.

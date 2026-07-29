@@ -1,5 +1,7 @@
 # Bev Novus - Design 1.0
 
+> Status: historical design specification. It records an aspirational architecture and must not be read as proof that every listed mechanism exists. Compare it with [PROJECT_BRIEF.md](PROJECT_BRIEF.md) before treating a section as implemented.
+
 ## Working name
 
 **Bev Novus** - a continuous spatial world in which organized matter can maintain itself, move, divide, mutate, and alter the conditions available to future organisms.

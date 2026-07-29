@@ -1,5 +1,7 @@
 # Artificial Life: Deep Research Dive
 
+> Status: research background and hypothesis space, not a list of implemented features. Current capabilities and non-claims are recorded in [PROJECT_BRIEF.md](PROJECT_BRIEF.md); current decisions are in [ROADMAP.md](ROADMAP.md).
+
 ## Purpose
 
 This document extends the first reading set into the current research frontier. The focus is not “which project looks most alive,” but which mechanisms can support a transition from life-like pattern formation to autonomous individuals, evolving populations, and open-ended innovation.

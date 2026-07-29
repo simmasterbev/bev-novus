@@ -1,240 +1,140 @@
 # Bev Novus roadmap
 
-## Artificial chemistry to an open-ended evolution research platform
+> Evidence-gated path from an artificial chemistry and particle-physics laboratory toward a defensible study of evolving individuals. Updated 2026-07-29. A completed engineering feature is not automatically a completed scientific milestone.
 
-Bev Novus is a small physical universe for studying what can emerge from local interactions. The project should create richer physics, chemistry, and ecology instead of hand-designing organisms.
+## North star
 
-Every feature must be:
+Bev Novus should eventually let us test a demanding question: can localized forms arise from local rules, maintain themselves using environmental resources, reproduce with inherited variation, diversify in an ecology, and continue generating viable novelty?
 
-- local and mechanically explainable;
-- objectively measurable;
-- reproducible from a seed and parameter set;
-- inspectable in the viewer and experiment archive;
-- compared against an ablation or control when it makes a scientific claim.
+The order matters. We should not call a pattern alive because it looks compelling, and we should not add extra rules to a world that has not first shown reliable persistence and accounting.
 
-## Phase 0 - Foundation (current)
+## Current state
 
-Implemented foundations:
+| Area | Current status | What it does not establish |
+| --- | --- | --- |
+| Field world | Instrumented 2D body/resource/waste world with seed emission, trait/mutability fields, lineage records, controls, and audit metrics. | The retained v2 audit did not pass persistence or evolvability at its 1,000-step horizon. |
+| Particle hybrid | Particle bodies coupled to resource/waste grids, with cohesion, repulsion, drag, taxis, periodic boundaries, GPU batching, and particle persistence metrics. | It has no particle reproduction, lineage, or particle trait inheritance. Zero particle births are expected, not a failure signal. |
+| Operations | Browser viewer, local GUI, GPU screening, CPU/reference paths, snapshots, JSON reports, adaptive parameter scheduling, and audit pages. | Search throughput does not prove a biological result. |
 
-- conserved matter, resource and waste fields;
-- recycling, regrowth, dormancy, and seed emission;
-- mutation and inherited traits;
-- connected-component pattern census and lineage records;
-- configurable viewer, CPU/GPU engines, batch sweeps, replay, export, and GUI preflight checks.
+The tracked `v2-audit.json` remains the reference for the original field audit: accounting and 10-seed replication passed; persistence and evolvability failed; collective individuality and open-endedness were not demonstrated.
 
-The foundation is a respectable artificial-chemistry substrate, but it is not evidence of open-ended evolution.
+## Research standard
 
-## Phase 1 - Better physics (complete as isolated prototype)
+Every claim needs four things:
 
-Goal: introduce simple force-bearing body matter without replacing the existing world until the mechanics are validated.
+1. a measurable definition;
+2. fixed seeds and saved parameters sufficient to replay it;
+3. a relevant control or ablation;
+4. a result that holds across independent runs rather than one attractive frame.
 
-### 1.1 Force system (prototype started)
+Heuristic morphology labels such as *seedlet*, *cluster*, or *colony* remain observation aids. They are never organism labels by themselves.
 
-Tasks:
+## Workstream A - particle individuality baseline
 
-- add a force accumulator;
-- use spatial bins/cell lists for local neighbor lookup;
-- add short-range repulsion and medium-range attraction kernels;
-- add configurable interaction radius, strength, drag, and mobility;
-- preserve periodic-boundary behavior and matter accounting.
+**Question:** Can a particle body be a bounded, resource-supported, persistent physical individual before we ask it to reproduce?
 
-Acceptance: isolated bodies remain finite, do not collapse into one point, and show stable cohesion across fixed seeds.
+### A1. Fix a small canonical panel
 
-Current implementation: `particle_prototype.py` provides periodic spatial bins, minimum-image neighbors, short-range repulsion, medium-range attraction, overdamped force motion, drag, mobility, and deterministic seeded worlds. It is intentionally separate from the field engine until stability and coupling tests pass.
+Select a small number of particle parameter sets from existing campaigns. Preserve the full configuration, seed, engine version, resolution, step rate, and snapshot cadence.
 
-### 1.2 Overdamped particle motion (complete)
+**Pass gate:** each retained condition can be replayed and yields finite state plus accounting drift within its documented tolerance.
 
-Use `velocity = mobility * force` and `position += velocity * dt` before considering momentum or rigid-body physics.
+### A2. Measure persistence, not just survival count
 
-Tasks:
+For each canonical condition, record body mass, live particles, connectedness/compactness, resource exposure, waste exposure, extinction time, and time-resolved accounting.
 
-- particle position, velocity, mass, and drag;
-- timestep and stability sweep;
-- numerical-fault detection;
-- body/resource/waste coupling tests.
+Run matched no-resource, no-metabolism, no-recycling, and well-mixed/spatial controls where applicable.
 
-Acceptance: bodies deform and translate smoothly, mass drift remains within the existing accounting gate, and the force model is faster than an O(N²) implementation at comparable particle counts.
+**Pass gate:** a spatial, resource-coupled condition has materially longer persistence or better boundedness than its matched controls across multiple seeds.
 
-Prototype evidence: a 9-run fixed-seed sweep across timesteps `0.02`, `0.05`, and `0.1` remained finite and bounded for 500 steps per run. The current maximum observed speed was `9.41` prototype units per step.
+### A3. Damage and recovery
 
-### 1.3 Hybrid world (complete as isolated prototype)
+At predefined times, remove a fixed fraction of a localized body, then compare recovered mass, compactness, and boundary score with an undamaged replay and a no-metabolism control.
 
-Keep resource and waste as grid fields while representing body matter experimentally as particles. Maintain a field-only control so any benefit from mechanics is measurable.
+**Pass gate:** recovery reaches a declared fraction of the pre-damage score within a declared horizon, and the advantage weakens or vanishes without metabolism/resource coupling.
 
-Acceptance: particle and field controls can run from the same seed/configuration and report comparable persistence, resource intake, reproduction, and morphology metrics.
+### A4. Decide honestly
 
-Current implementation: `HybridParticleWorld` couples particle body mass to resource and waste grids, resource regrowth, consumption, body yield, waste production/decay, resource taxis, and waste avoidance. It includes a deterministic seeded constructor and a no-external-input accounting test.
+If A2/A3 do not pass, simplify or repair the particle physical substrate. Do not add reproduction, signals, or extra chemistry merely to decorate an unstable body.
 
-Phase 1 exit condition: the isolated prototype is complete and tested. Viewer integration remains a separate comparison milestone so the field-only engine stays available as the control.
+## Workstream B - explicit particle reproduction and heredity
 
-## Phase 2 - Internal complexity
+**Entry condition:** Workstream A has shown a repeatable, controlled persistence/repair advantage.
 
-### 2.1 Internal state
+### B1. Implement a conservative division mechanism
 
-Add optional per-particle state for energy, signal, affinity, age, stress, dormancy, repair, and mutability. Keep each state bounded, conserved where appropriate, and logged.
+Division must transfer existing parent particle mass to an offset daughter; it must not create a new body from nowhere. Record parent ID, child ID, time, transferred mass, and post-division viability.
 
-Acceptance: state updates remain finite and ablations show that each claimed state affects the intended observable.
+### B2. Add an inherited description
 
-### 2.2 Heritable trait expansion
+Begin with a small, bounded heritable vector controlling physical or metabolic parameters. Mutation must be explicit, bounded, and logged. Development must map that vector to a particle body reproducibly.
 
-Expand continuous inherited traits gradually:
+### B3. Test heredity and selection
 
-- attraction and repulsion preference;
-- mobility and drag;
-- metabolism and repair;
-- dormancy tendency;
-- signal strength;
-- reproduction threshold;
-- resource preference.
+Compare parent-child similarity with shuffled-parent and mutation-off controls. Test whether inherited differences predict survival, resource intake, repair, or reproduction rather than simply correlating with a transient parameter sweep.
 
-Do not evolve force kernels yet. First establish that the fixed kernels are meaningful.
+**Pass gate:** every particle birth is traceable; parent-child similarity exceeds shuffled controls; an inherited difference predicts at least one fitness-relevant outcome under controls.
 
-Acceptance: parent-child similarity exceeds shuffled-parent controls and inherited differences predict survival, intake, repair, or reproduction.
+## Workstream C - ecology before complexity for its own sake
 
-### 2.3 Local signaling
+**Question:** Do different persistent/reproducing strategies occupy different resource situations?
 
-Add generic local signals that diffuse through neighboring cells or particles. Signals may support recruitment, repair, colony formation, and coordinated reproduction without naming those behaviors as rules.
+1. Add a second resource regime only after B is instrumented.
+2. Measure competition, waste interference, facilitation, mergers, and spatial occupancy.
+3. Compare spatial and well-mixed versions using the same seeds and average supply.
+4. Preserve both coexistence and collapse examples.
 
-Acceptance: signaling produces measurable changes under signal-on versus signal-off controls, with no hidden global state.
+**Pass gate:** trait groups occupy distinguishable regimes for a declared long horizon, and removing spatial structure measurably reduces coexistence or niche separation.
 
-## Phase 3 - Real ecology
+## Workstream D - higher-level individuality and evolvability
 
-### 3.1 Environmental heterogeneity
+### D1. Collective individuality
 
-Add optional temperature, toxicity, seasonal cycles, and local disasters.
+Track multi-core aggregates and compare them with the same members separated. Require persistence, group identity through reproduction, and performance benefit rather than mere contact.
 
-Acceptance: environments produce distinct, reproducible selective pressures and spatial structure changes coexistence relative to well-mixed controls.
+### D2. Evolvability
 
-### 3.2 Generic chemical fields
+Vary behavior, mutability, and developmental mapping independently. Replay ancestors and descendants under matched mutation budgets.
 
-Add optional pheromone, catalyst, inhibitor, and attractant fields. These remain generic chemical channels, not named food, brain, or organism systems.
+**Pass gate:** descendants generate more viable, measurable novelty than ancestors without merely raising mutation rate or exploiting an unaccounted external source.
 
-Acceptance: fields have explicit diffusion/decay/source rules, exportable parameters, and ablations.
+## Workstream E - open-endedness audit
 
-### 3.3 Niche formation
+Open-endedness is an audit result, not a milestone name. Keep all failed and successful controls.
 
-Measure strategies from behavior rather than labels: recycling, dormancy, aggressive growth, exploration, resource specialization, and facilitation.
+Require several agreeing indicators over long runs:
 
-Acceptance: strategy clusters replicate across seeds and occupy measurably different environmental regimes.
+- sustained novelty beyond startup transients;
+- lineage branching and persistence of descendants;
+- new, measurable interactions or resource niches;
+- robustness to seed changes and replay;
+- ablation evidence that the claimed mechanism, not an artifact, produced the effect.
 
-## Phase 4 - Evolution
+**Pass gate:** all indicators and their controls are retained in a public/inspectable audit. If one fails, report the narrower result instead of calling the system open-ended.
 
-### 4.1 Better heredity
+## Operational roadmap
 
-Track continuous genomes, independent parent mutations, mutation spectra, inheritance, divergence, and genotype snapshots.
+The tooling supports the science; it does not replace it.
 
-### 4.2 Long-term lineages
-
-Generate durable lineage trees and measure branching, extinction, persistence, diversity, and generation depth.
-
-### 4.3 Ecological selection
-
-Avoid an explicit fitness bonus. Let selection emerge from survival, reproduction, resource efficiency, repair, robustness, and interactions.
-
-Acceptance: selection effects survive mutation-off, neutral-trait, shuffled-parent, and matched-budget controls.
-
-## Phase 5 - Instrumentation
-
-This phase is a prerequisite for strong claims in later phases.
-
-### 5.1 Experiment database
-
-Persist seed, full parameters, code/version, metrics, snapshots, events, traits, and lineage records.
-
-### 5.2 Event detection
-
-Bookmark first reproduction, extinction, first colony, mutation burst, longest lineage, highest complexity, largest body, and major ecological transitions.
-
-### 5.3 Analysis dashboard
-
-Plot diversity, entropy, persistence, body count, resource, waste, mutation, lineage count, novelty, niches, and control differences.
-
-### 5.4 Morphology statistics
-
-Add compactness, branching, symmetry, holes, perimeter, density, and optionally fractal dimension. Keep heuristic labels explicitly separate from organism claims.
-
-Acceptance: a run can be independently replayed from its archive and produce the same event/metric record within documented numerical tolerance.
-
-## Phase 6 - Massive search
-
-### 6.1 Experiment runner
-
-Scale from thousands toward 10,000, 50,000, and 100,000 reproducible simulations using parallel CPU/GPU screening and deterministic replay.
-
-### 6.2 Ranking
-
-Rank by persistence, diversity, novelty, reproduction, complexity, ecological richness, and robustness rather than a single saturated score.
-
-### 6.3 World archive
-
-Store parameters, metrics, frames, lineages, traits, and provenance for retained worlds.
-
-### 6.4 Similarity search
-
-Support closest worlds, most unique worlds, largest deviations, and cluster members using metric vectors and morphology/ecology signatures.
-
-Acceptance: a batch can be stopped, resumed, audited, and re-ranked without rerunning completed worlds.
-
-## Phase 7 - Multiverse analysis
-
-Only begin after the force model, instrumentation, and large-scale archive are stable.
-
-### 7.1 World space
-
-Represent each simulation as a point based on morphology, ecology, lineage, and diversity.
-
-### 7.2 Embedding
-
-Explore 3D/4D embeddings of world populations and identify clusters, outliers, and transitions.
-
-### 7.3 Layered universes
-
-Experiment with resource leakage, migrating seeds, chemical leakage, and cross-world inheritance.
-
-### 7.4 Dynamic universe graph
-
-Connect worlds by measured similarity or controlled migration rather than fixed adjacency.
-
-Acceptance: multiverse results preserve provenance and can be reproduced from the underlying world archives.
-
-## Phase 8 - Research platform
-
-Deliver experiment presets, batch comparison, parameter sweeps, statistical summaries, paper-quality plots, reproducibility tools, dataset export, and an interactive lineage browser.
-
-Stretch goals:
-
-- continuous space;
-- compute-shader particle simulation;
-- 3D physics;
-- evolution of interaction kernels;
-- mutating chemical reactions.
-
-## Existing 2.0 evidence gates
-
-These gates remain active during the expanded roadmap:
-
-| Area | Test | Gate |
-|---|---|---|
-| Accounting | Matter drift across fixed-seed runs | `< 1e-8` per 1,000 steps |
-| Replication | Independent seeded runs | At least 10 retained runs |
-| Persistence | Pattern lifetime/coexistence | Report median lifetime and extinction rate |
-| Repair | Damage versus no-metabolism control | Report recovery and control difference |
-| Lineage | Birth parent/child records | Every birth has IDs, genotype, and viability outcome |
-| Heredity | Parent-child versus shuffled-parent similarity | Positive correlation required |
-| Ecology | Spatial versus well-mixed comparison | Report coexistence, patchiness, interactions |
-| Evolvability | Novelty under matched mutation budgets | Novelty must persist beyond transients |
-| Open-endedness | Long-run continuing innovation | Never pass without multi-metric ablation evidence |
+| Capability | Use | Guardrail |
+| --- | --- | --- |
+| Viewer | Inspect a single world and explain its current state. | Treat morphology text as a heuristic. |
+| GUI grid and live views | Compare a controlled batch locally. | Limit workers/live previews so the desktop stays usable. |
+| GPU particle screening | Find plausible persistence candidates quickly. | Recheck retained candidates with saved configs and accounting metrics. |
+| Adaptive campaigns | Produce bounded, reproducible next-generation parameter panels from a completed report. | It optimizes experiments; it does not evolve simulated organisms. |
+| JSON/snapshots/audits | Preserve provenance and review failures. | Never silently discard a negative control or failed run. |
 
 ## Immediate execution order
 
-1. Freeze the current field-only engine as the control baseline.
-2. Build an isolated overdamped particle prototype with spatial binning.
-3. Validate repulsion, cohesion, drag, boundaries, and numerical stability.
-4. Couple particles to existing resource and waste grids.
-5. Add side-by-side field/particle visualization and metrics.
-6. Only after the hybrid control is stable, add internal states and new heritable traits.
-7. Expand instrumentation before starting 100,000-run searches.
+1. Let current runs finish and preserve their reports/snapshots unchanged.
+2. Select a compact, fixed particle-persistence panel from completed reports.
+3. Replay that panel with a fixed metric schedule and matched controls.
+4. Add and run standardized particle damage/recovery tests only after the baseline panel is reproducible.
+5. Make the go/no-go decision for conservative particle division from A2/A3 evidence.
+6. In parallel, keep the field substrate as the current heredity/reproduction control and rerun its failed audit gates only when changes directly target those failures.
 
 ## Definition of success
 
-Success is not identifying a programmed organism. It is running large reproducible experiment populations, observing distinct heritable ecological strategies under different conditions, quantifying them rigorously, and allowing the evidence—not the implementation—to determine whether increasingly open-ended behavior is present.
+Short term success is a trustworthy answer about particle individuality, including a well-documented negative answer if that is what the controls show.
+
+Long term success is not a programmed creature. It is an archived population of locally produced forms with measured maintenance, heredity, ecological differentiation, and continuing viable novelty that survives skeptical controls.

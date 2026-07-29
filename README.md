@@ -1,5 +1,9 @@
 # Bev Novus
 
+## Start here
+
+Read [PROJECT_BRIEF.md](PROJECT_BRIEF.md) first for the current technical status, the research boundary between field and particle worlds, and a plain-language explanation. [ROADMAP.md](ROADMAP.md) is the evidence-gated execution plan. The retained field-world audit is [v2-audit.json](v2-audit.json); its failures are part of the record, not omissions.
+
 Bev Novus is a small, inspectable artificial-life world inspired by Lenia, Flow-Lenia, Avida, and artificial chemistry research.
 
 Version 2.2 adds renewable ecology and dormancy on top of the initial roadmap audit and expanded experiment controls. The live viewer now exposes a parameter lab for:
@@ -88,6 +92,8 @@ the particle prototype reaches its next milestone.
 For particle runs, use the separate `Particle decay` field; its lower defaults avoid
 applying the field engine's much larger per-step decay directly to particle masses.
 
+The GUI also has an adaptive campaign workflow. Give it a completed particle JSON report, choose a bounded generation count, and it retains high-scoring configurations while perturbing declared safe parameter ranges. This schedules new experiments; it does not mean the particle bodies themselves are evolving. Use the focused and comparison visualization views to inspect saved configurations, and keep live previews off for large desktop campaigns.
+
 For a broad screening sweep across all major rules, use the GUI's **Broad sweep**
 button. Set the `Broad configs` field (256 by default); it samples that many
 configurations with the selected seeds and uses the same workers, progress display,
@@ -129,7 +135,7 @@ run_broad_sweep.bat --configs 512 --steps 200000 --workers 16
 
 ## Roadmap and 2.0 audit
 
-See `ROADMAP.md` for the full release sequence and test gates. Version 2.0 publishes the audit state of those gates, including failures and null results.
+See [ROADMAP.md](ROADMAP.md) for the current evidence-gated sequence and [PROJECT_BRIEF.md](PROJECT_BRIEF.md) for the distinction between implemented tooling and demonstrated biology. Version 2.0 publishes the audit state of its field-world gates, including failures and null results.
 
 ## What 2.0 does not claim
 
