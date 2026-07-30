@@ -25,6 +25,15 @@ class GuiReportTests(unittest.TestCase):
             report.write_text(json.dumps({"results": [{"live": 1}]}), encoding="utf-8")
             self.assertEqual([report], list_report_paths(root))
 
+    def test_non_report_json_is_hidden_from_history(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            (root / "legacy-list.json").write_text(json.dumps([{"live": 1}]), encoding="utf-8")
+            (root / "settings.json").write_text(json.dumps({"configs": [{}]}), encoding="utf-8")
+            report = root / "report.json"
+            report.write_text(json.dumps({"results": [{"live": 1}]}), encoding="utf-8")
+            self.assertEqual([report], list_report_paths(root))
+
     def test_delete_rejects_report_outside_managed_directories(self):
         with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as outside:
             root = Path(folder)

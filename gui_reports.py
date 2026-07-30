@@ -8,8 +8,15 @@ from pathlib import Path
 
 
 def list_report_paths(results_dir: Path) -> list[Path]:
-    paths = [path for path in results_dir.glob("*.json") if path.name != "adaptive-next.json"]
-    paths += list((results_dir / "adaptive-campaign").glob("*.json"))
+    candidates = [path for path in results_dir.glob("*.json") if path.name != "adaptive-next.json"]
+    candidates += list((results_dir / "adaptive-campaign").glob("*.json"))
+    paths = []
+    for path in candidates:
+        try:
+            read_report(path)
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+        paths.append(path)
     return sorted(paths, key=lambda path: path.stat().st_mtime_ns if path.exists() else 0, reverse=True)
 
 
