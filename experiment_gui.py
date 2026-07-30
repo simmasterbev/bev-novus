@@ -592,6 +592,9 @@ class ExperimentApp(tk.Tk):
             config = json.loads(output.read_text(encoding="utf-8"))
             self.adaptive_configs = config.get("configs") or None
             self.adaptive_campaign_active = False
+            self.adaptive_generation = int(config.get("generation", 0) or 0)
+            source_report = config.get("source_report")
+            self.adaptive_source_path = Path(source_report) if source_report else None
             defaults = config.get("gui_defaults", {})
             for name, value in defaults.items():
                 if name in self.fields:
@@ -617,6 +620,9 @@ class ExperimentApp(tk.Tk):
             if not isinstance(configs, list) or not configs:
                 return
             self.adaptive_configs = configs
+            self.adaptive_generation = int(config.get("generation", 0) or 0)
+            source_report = config.get("source_report")
+            self.adaptive_source_path = Path(source_report) if source_report else path
             defaults = config.get("gui_defaults") or {}
             if not isinstance(defaults, dict):
                 defaults = {}
@@ -641,26 +647,32 @@ class ExperimentApp(tk.Tk):
         except (TypeError, ValueError) as error:
             messagebox.showerror("Invalid adaptive setup", str(error))
             return
-        chosen_path = self._preferred_report()
-        chosen = str(chosen_path) if chosen_path else filedialog.askopenfilename(
-            title="Choose starting result report", filetypes=(("JSON", "*.json"), ("All files", "*.*")))
-        if not chosen:
-            return
         try:
-            output = Path(__file__).with_name("Results") / "adaptive-next.json"
-            config = build_next_config(Path(chosen), output, count=count, elite_count=elites, seed=7)
+            loaded = bool(self.adaptive_configs and self.adaptive_generation)
+            if loaded:
+                config = {"configs": self.adaptive_configs, "generation": self.adaptive_generation}
+                source_name = "adaptive-next.json"
+            else:
+                chosen_path = self._preferred_report()
+                chosen = str(chosen_path) if chosen_path else filedialog.askopenfilename(
+                    title="Choose starting result report", filetypes=(("JSON", "*.json"), ("All files", "*.*")))
+                if not chosen:
+                    return
+                output = Path(__file__).with_name("Results") / "adaptive-next.json"
+                config = build_next_config(Path(chosen), output, count=count, elite_count=elites, seed=7)
+                source_name = Path(chosen).name
             self.adaptive_configs = config["configs"]
             self.adaptive_campaign_active = True
             self.adaptive_generation = int(config["generation"])
             self.adaptive_generation_total = generations
-            self.adaptive_config_count = count
+            self.adaptive_config_count = len(self.adaptive_configs)
             self.adaptive_elite_count = elites
-            self.adaptive_source_path = Path(chosen)
             self.engine.set("Particle hybrid")
             self.live_previews.set(False)
             self._toggle_live_previews()
             self.run_started_at = time.perf_counter()
-            self.help_text.set(f"Adaptive campaign loaded from {Path(chosen).name}; generation {self.adaptive_generation}/{generations} is ready.")
+            self.fields["Adaptive configs"].set(str(len(self.adaptive_configs)))
+            self.help_text.set(f"Adaptive campaign loaded from {source_name}; generation {self.adaptive_generation}/{generations} is ready.")
             self.start_gpu_particle()
         except (OSError, ValueError, json.JSONDecodeError) as error:
             messagebox.showerror("Adaptive campaign error", str(error))
