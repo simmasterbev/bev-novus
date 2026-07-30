@@ -71,6 +71,7 @@ class ExperimentApp(tk.Tk):
         self.summary_vars: dict[str, tk.StringVar] = {}
         self.sort_column = "run"
         self.sort_reverse = False
+        self.detail_text = tk.StringVar(value="Select a run to inspect its metrics and saved frame.")
         self._build()
         self._load_initial_adaptive()
 
@@ -449,6 +450,9 @@ class ExperimentApp(tk.Tk):
         self.run_table.configure(yscrollcommand=run_scroll.set)
         self.run_table.grid(row=0, column=0, sticky="nsew")
         run_scroll.grid(row=0, column=1, sticky="ns")
+        details = ttk.LabelFrame(runs_frame, text="Selected run")
+        details.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        ttk.Label(details, textvariable=self.detail_text, justify="left", anchor="w", wraplength=900).pack(fill="x", padx=8, pady=7)
         runs_frame.rowconfigure(0, weight=1)
         runs_frame.columnconfigure(0, weight=1)
         self.run_table.bind("<<TreeviewSelect>>", self._on_run_selection)
@@ -723,6 +727,20 @@ class ExperimentApp(tk.Tk):
         selected = self._selected_paths()
         for path, card in self.live_cards.items():
             card["card"].configure(relief="sunken" if path in selected else "ridge")
+        if not selected:
+            self.detail_text.set("Select a run to inspect its metrics and saved frame.")
+            return
+        path = selected[0]
+        result = next((row for row in self.results
+                       if row.get("_snapshot_path") == path or row.get("snapshot_path") == path), None)
+        if not result:
+            self.detail_text.set(f"{path} • no final metrics recorded yet")
+            return
+        self.detail_text.set(
+            f'{result.get("label", "run")} • seed {result.get("seed", "")} • '
+            f'live {result.get("live", "")} • births {result.get("births", "")} • '
+            f'viable {result.get("viable", "")} • mass drift {result.get("mass_drift", "")} • '
+            f'finite {result.get("finite", "unknown")} • frame {result.get("_snapshot_path", "not saved")}')
 
     def _select_path(self, path: str, focus: bool = False) -> None:
         iid = self.run_rows.get(path)
