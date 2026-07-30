@@ -349,6 +349,39 @@ class ExperimentApp(tk.Tk):
         self.status.set(f"Deleted configuration: {name}")
         self._log_event(f"Deleted setup: {name}")
 
+    def export_setup(self) -> None:
+        path = filedialog.asksaveasfilename(
+            title="Export GUI setup", defaultextension=".json",
+            initialfile=(self.preset_name.get().strip() or "bev-novus-setup") + ".json",
+            filetypes=(("JSON configuration", "*.json"), ("All files", "*.*")))
+        if not path:
+            return
+        Path(path).write_text(json.dumps(self._config_snapshot(), indent=2), encoding="utf-8")
+        self.status.set(f"Exported setup: {Path(path).name}")
+        self._log_event(f"Exported setup: {Path(path).name}")
+
+    def import_setup(self) -> None:
+        chosen = filedialog.askopenfilename(
+            title="Import GUI setup", filetypes=(("JSON configuration", "*.json"), ("All files", "*.*")))
+        if not chosen:
+            return
+        path = Path(chosen)
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(config, dict) or config.get("schema") != "bev-novus-gui-config-v1":
+                raise ValueError("That file is not a Bev Novus GUI configuration.")
+            self._apply_config(config)
+            name = path.stem
+            saved = save_preset(name, config)
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            messagebox.showerror("Configuration import", str(error))
+            return
+        self.preset_name.set(saved.stem)
+        self.preset_choice.set(saved.stem)
+        self._refresh_presets()
+        self.status.set(f"Imported setup: {saved.stem}")
+        self._log_event(f"Imported setup: {saved.stem}")
+
     def _build(self) -> None:
         try:
             ttk.Style(self).theme_use("clam")
@@ -464,13 +497,19 @@ class ExperimentApp(tk.Tk):
         save_button.grid(row=2, column=1, sticky="ew", padx=6, pady=5)
         delete_button = ttk.Button(library, text="Delete", command=self.delete_preset)
         delete_button.grid(row=2, column=2, sticky="ew", padx=6, pady=5)
+        import_button = ttk.Button(library, text="Import", command=self.import_setup)
+        import_button.grid(row=3, column=0, sticky="ew", padx=6, pady=5)
+        export_button = ttk.Button(library, text="Export", command=self.export_setup)
+        export_button.grid(row=3, column=1, columnspan=2, sticky="ew", padx=6, pady=5)
         for column in range(3):
             library.columnconfigure(column, weight=1)
         for widget, text in ((self.preset_box, "Choose a saved configuration managed by the GUI."),
                              (preset_name, "Name used when saving the current setup as a reusable configuration."),
                              (load_button, "Apply the selected saved setup to the visible controls."),
                              (save_button, "Save the current controls as a reusable setup in the GUI library."),
-                             (delete_button, "Delete the selected saved setup from the GUI library.")):
+                             (delete_button, "Delete the selected saved setup from the GUI library."),
+                             (import_button, "Import a JSON setup, apply it, and add it to the reusable GUI library."),
+                             (export_button, "Export the current GUI setup as a portable JSON configuration.")):
             self._help(widget, text)
         self._refresh_presets()
 
