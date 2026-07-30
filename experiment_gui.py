@@ -64,6 +64,7 @@ class ExperimentApp(tk.Tk):
         self.run_started_at = 0.0
         self.eta_text = tk.StringVar(value="ETA: -")
         self._build()
+        self._load_initial_adaptive()
 
     def _help(self, widget: tk.Widget, text: str) -> None:
         widget.bind("<Enter>", lambda _event: self.help_text.set(text))
@@ -340,6 +341,32 @@ class ExperimentApp(tk.Tk):
             messagebox.showerror("Adaptive config error", str(error))
         if self.live_previews.get():
             self._refresh_live_previews()
+
+    def _load_initial_adaptive(self) -> None:
+        path = Path(__file__).with_name("Results") / "adaptive-next.json"
+        if not path.exists():
+            return
+        try:
+            config = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(config, dict):
+                return
+            configs = config.get("configs") or []
+            if not isinstance(configs, list) or not configs:
+                return
+            self.adaptive_configs = configs
+            defaults = config.get("gui_defaults") or {}
+            if not isinstance(defaults, dict):
+                defaults = {}
+            for name, value in defaults.items():
+                if name in self.fields:
+                    self.fields[name].set(str(value))
+            if defaults.get("Engine"):
+                self.engine.set(defaults["Engine"])
+            self.fields["Adaptive configs"].set(str(len(configs)))
+            self.status.set(f"Adaptive generation {config.get('generation', '?')} loaded: {len(configs)} configs ready")
+            self.help_text.set(f"Loaded {path.name}. Review the adaptive settings, then start the next run when ready.")
+        except (OSError, ValueError, json.JSONDecodeError):
+            self.status.set("Ready - adaptive-next.json could not be loaded")
 
     def start_adaptive_campaign(self) -> None:
         try:
