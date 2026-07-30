@@ -62,6 +62,9 @@ class ExperimentApp(tk.Tk):
         self.adaptive_config_count = 24
         self.adaptive_elite_count = 6
         self.adaptive_source_path: Path | None = None
+        self.run_mode = "idle"
+        self.report_config: dict | None = None
+        self.last_report_path: Path | None = None
         self.run_started_at = 0.0
         self.eta_text = tk.StringVar(value="ETA: -")
         self.preset_name = tk.StringVar()
@@ -147,6 +150,8 @@ class ExperimentApp(tk.Tk):
     def _clear_run_view(self) -> None:
         self.results.clear()
         self.gpu_report = None
+        self.report_config = None
+        self.last_report_path = None
         self.particle_gpu_report = None
         for child in self.visual_inner.winfo_children():
             child.destroy()
@@ -195,6 +200,7 @@ class ExperimentApp(tk.Tk):
             return
         self._clear_run_view()
         self.results = [row for row in rows if isinstance(row, dict)]
+        self.report_config = report.get("gui_config") or report.get("config")
         if "replays" in report:
             self.gpu_report = report
         if report.get("backend", "").startswith("gpu-particle"):
@@ -221,7 +227,21 @@ class ExperimentApp(tk.Tk):
         self.eta_text.set("ETA: historical")
         self.status.set(f"Loaded report: {label}")
         self.view_status.set(f"Historical report • {len(self.results)} rows loaded")
+        if self.report_config:
+            self.help_text.set("Report setup is available. Use 'Use setup' to restore its controls, then rerun or modify it.")
         self.workspace.select(self.runs_frame)
+
+    def apply_report_setup(self) -> None:
+        if not self.report_config:
+            messagebox.showinfo("Report setup", "This report does not contain a saved GUI setup.")
+            return
+        try:
+            self._apply_config(self.report_config)
+        except (TypeError, ValueError, KeyError) as error:
+            messagebox.showerror("Report setup", str(error))
+            return
+        self.status.set("Restored setup from report; ready to rerun")
+        self.help_text.set("Historical setup restored. Adjust any fields, then choose a run action.")
 
     def save_preset(self) -> None:
         name = self.preset_name.get().strip() or self.preset_choice.get().strip()
@@ -427,10 +447,13 @@ class ExperimentApp(tk.Tk):
         self.report_box.pack(side="left", fill="x", expand=True, padx=6, pady=5)
         report_load = ttk.Button(history, text="Load report", command=self.load_report)
         report_load.pack(side="left", padx=3, pady=5)
+        self.report_setup_button = ttk.Button(history, text="Use setup", command=self.apply_report_setup)
+        self.report_setup_button.pack(side="left", padx=3, pady=5)
         report_refresh = ttk.Button(history, text="Refresh", command=self._refresh_reports)
         report_refresh.pack(side="left", padx=3, pady=5)
         self._help(self.report_box, "Choose a saved report discovered in Results or Results/adaptive-campaign.")
         self._help(report_load, "Load historical rows and matching saved frames into the dashboard without opening the filesystem.")
+        self._help(self.report_setup_button, "Restore the saved GUI controls from the selected report so it can be rerun or modified.")
         self._help(report_refresh, "Rescan the GUI-managed Results report list.")
         self._refresh_reports()
 
@@ -562,6 +585,8 @@ class ExperimentApp(tk.Tk):
                 self._add_live_card(str(snapshot_path), index, job["label"], job["seed"], job["live_snapshot_every"])
         self.stop_event.clear()
         self.adaptive_campaign_active = False
+        self.run_mode = "broad" if broad else "grid"
+        self.last_report_path = None
         self.run_started_at = time.perf_counter()
         self.total_jobs = len(jobs)
         self.completed_jobs = 0
@@ -888,12 +913,14 @@ class ExperimentApp(tk.Tk):
             messagebox.showerror("GPU preflight failed", str(error))
             return
         self.status.set(f"Preflight passed: {check['births']} mutation checks")
-        self.results.clear(); self.gpu_report = None; self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
+        self.results.clear(); self.gpu_report = None; self.report_config = None; self.last_report_path = None; self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
         self.run_table.delete(*self.run_table.get_children())
         self.visual_filter = None; self.visual_scale = 2
         for child in self.visual_inner.winfo_children():
             child.destroy()
         self.stop_event.clear()
+        self.run_mode = "field-gpu"
+        self.last_report_path = None
         self.run_started_at = time.perf_counter()
         self.gpu_screen_total = config_count * len(seeds)
         self.total_jobs = self.gpu_screen_total + replay_top * len(seeds)
@@ -945,7 +972,7 @@ class ExperimentApp(tk.Tk):
         except (TypeError, ValueError) as error:
             messagebox.showerror("Invalid GPU particle setup", str(error))
             return
-        self.results.clear(); self.gpu_report = None; self.particle_gpu_report = None
+        self.results.clear(); self.gpu_report = None; self.particle_gpu_report = None; self.report_config = None; self.last_report_path = None
         self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
         self.run_table.delete(*self.run_table.get_children())
         self.visual_filter = None; self.visual_scale = 2
@@ -958,6 +985,8 @@ class ExperimentApp(tk.Tk):
             job["snapshot_path"] = str(snapshot)
             self._add_run_row(str(snapshot), index, job["label"], job["seed"])
         self.stop_event.clear()
+        self.run_mode = "adaptive-particle" if self.adaptive_campaign_active else "particle-gpu"
+        self.last_report_path = None
         self.total_jobs = len(jobs)
         self._update_summary(0, self.total_jobs)
         self.progress.configure(maximum=self.total_jobs, value=0)
@@ -994,6 +1023,8 @@ class ExperimentApp(tk.Tk):
         self.after(0, update)
 
     def add_gpu_particle_report(self, report: dict) -> None:
+        report = dict(report)
+        report["gui_config"] = self._config_snapshot()
         self.particle_gpu_report = report
         report_path = Path(__file__).with_name("Results") / "gui-particle-gpu-latest.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1049,6 +1080,8 @@ class ExperimentApp(tk.Tk):
                                self._update_eta(value, self.total_jobs)))
 
     def add_gpu_report(self, report: dict) -> None:
+        report = dict(report)
+        report["gui_config"] = self._config_snapshot()
         self.gpu_report = report
         report_path = Path(__file__).with_name("Results") / "gui-gpu-latest.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -1128,8 +1161,23 @@ class ExperimentApp(tk.Tk):
         self.stop_button.configure(state="disabled")
         self.progress.configure(value=completed)
         self._update_summary(completed, total)
+        if self.run_mode in ("grid", "broad") and self.results and not self.stop_event.is_set():
+            report = {
+                "schema": "bev-novus-gui-report-v1",
+                "backend": "gui-cpu",
+                "mode": self.run_mode,
+                "steps": self.fields["Steps"].get(),
+                "results": [{key: value for key, value in result.items() if not key.startswith("_")}
+                            for result in self.results],
+                "gui_config": self._config_snapshot(),
+            }
+            prefix = "gui-broad" if self.run_mode == "broad" else "gui-grid"
+            self.last_report_path = self._archive_report(prefix, report)
+            self._refresh_reports()
         self.eta_text.set("ETA: stopped" if self.stop_event.is_set() else "ETA: complete")
         self.status.set("Stopped" if self.stop_event.is_set() else f"Finished — {completed}/{total} results generated")
+        if self.last_report_path and not self.stop_event.is_set():
+            self.status.set(f"Finished - {completed}/{total} results saved as {self.last_report_path.name}")
         self.view_status.set(f"{len(self.live_cards)} simulations • {completed}/{total} {'stopped' if self.stop_event.is_set() else 'complete'}")
 
     def stop(self) -> None:
