@@ -102,6 +102,7 @@ def build_next_config(report_path: Path, output_path: Path, *, count: int = 24,
                           for name in PARAMETERS}
     top = [{"score": item["score"], "seed": item["seed"], "config": item["config"]} for item in elites]
     generation = int(report.get("generation", 0)) + 1 if isinstance(report, dict) else 1
+    report_steps = report.get("steps") if isinstance(report, dict) else None
     output = {
         "schema": "bev-novus-adaptive-config-v1",
         "generation": generation,
@@ -113,12 +114,18 @@ def build_next_config(report_path: Path, output_path: Path, *, count: int = 24,
         "configs": configs,
         "gui_defaults": {
             "Engine": "Particle hybrid",
+            "Adaptive generations": "1",
+            "Adaptive configs": str(len(configs)),
+            "Adaptive elites": str(len(elites)),
             "Body yield": ",".join(f"{value['body_yield']:.5g}" for value in configs[:min(8, len(configs))]),
             "Particle decay": ",".join(f"{value['decay_rate']:.5g}" for value in configs[:min(8, len(configs))]),
             "GPU batch": "32",
             "Broad configs": str(count),
         },
     }
+    if report_steps:
+        output["steps"] = int(report_steps)
+        output["gui_defaults"]["Steps"] = str(int(report_steps))
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(output, indent=2), encoding="utf-8")
     return output
