@@ -23,10 +23,19 @@ def list_presets() -> list[str]:
     return sorted(path.stem for path in CONFIG_DIR.glob("*.json"))
 
 
+def preset_exists(name: str) -> bool:
+    return _path(name).exists()
+
+
 def save_preset(name: str, data: dict) -> Path:
     path = _path(name)
     CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    try:
+        temporary.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
     return path
 
 

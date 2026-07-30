@@ -14,7 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 from broad_sweep import latin_hypercube
 from adaptive_config import build_next_config
 from experiments import run_condition, run_particle_condition
-from gui_config import delete_preset, list_presets, load_preset, save_preset
+from gui_config import delete_preset, list_presets, load_preset, preset_exists, save_preset
 from gui_reports import archive_report, delete_report as delete_report_file, list_report_paths, read_report
 from gui_schema import EXPLANATIONS, FIELD_SPECS, dynamic_rules
 from gpu_sweep import run_gpu_particle_campaign, screen_and_replay
@@ -418,8 +418,11 @@ class ExperimentApp(tk.Tk):
             config = json.loads(path.read_text(encoding="utf-8"))
             if not isinstance(config, dict) or config.get("schema") != "bev-novus-gui-config-v1":
                 raise ValueError("That file is not a Bev Novus GUI configuration.")
-            self._apply_config(config)
             name = path.stem
+            if preset_exists(name) and not messagebox.askyesno(
+                    "Replace configuration", f"A saved configuration named '{name}' already exists. Replace it?"):
+                return
+            self._apply_config(config)
             saved = save_preset(name, config)
         except (OSError, ValueError, json.JSONDecodeError) as error:
             messagebox.showerror("Configuration import", str(error))
