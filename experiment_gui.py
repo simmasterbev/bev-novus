@@ -66,6 +66,7 @@ class ExperimentApp(tk.Tk):
         self.run_active = False
         self.report_config: dict | None = None
         self.last_report_path: Path | None = None
+        self.plan_text = tk.StringVar(value="Plan not calculated")
         self.run_started_at = 0.0
         self.eta_text = tk.StringVar(value="ETA: -")
         self.preset_name = tk.StringVar()
@@ -97,6 +98,23 @@ class ExperimentApp(tk.Tk):
         self.activity_items.clear()
         if self.activity_list is not None:
             self.activity_list.delete(0, tk.END)
+
+    def _update_plan_preview(self) -> None:
+        try:
+            jobs = self.jobs()
+        except (TypeError, ValueError, KeyError):
+            self.plan_text.set("Enter valid setup values to preview the run plan.")
+            return
+        if self.adaptive_configs and self.engine.get() == "Particle hybrid":
+            mode = f"adaptive generation {self.adaptive_generation or '?'}"
+        else:
+            mode = "Cartesian grid"
+        self.plan_text.set(f"{len(jobs):,} worlds  •  {self.engine.get()}  •  {mode}")
+
+    def preview_plan(self) -> None:
+        self._update_plan_preview()
+        self.status.set(f"Run plan: {self.plan_text.get()}")
+        self._log_event(f"Checked run plan: {self.plan_text.get()}")
 
     def _set_run_controls(self, running: bool) -> None:
         state = "disabled" if running else "normal"
@@ -130,6 +148,7 @@ class ExperimentApp(tk.Tk):
                 variable.set(bool(controls[name]))
         self.live_previews.set(bool(config.get("live_previews", False)))
         self._toggle_live_previews()
+        self._update_plan_preview()
 
     def _refresh_presets(self) -> None:
         self.preset_box.configure(values=list_presets())
@@ -426,6 +445,7 @@ class ExperimentApp(tk.Tk):
                 self.fields[label] = variable
                 entry = ttk.Entry(tab, textvariable=variable, width=16)
                 entry.grid(row=row * 2 + 1, column=column, sticky="ew", padx=4, pady=(0, 3))
+                entry.bind("<KeyRelease>", lambda _event: self._update_plan_preview())
                 self._help(entry, explanations[label])
             for column in range(2):
                 tab.columnconfigure(column, weight=1)
@@ -459,6 +479,7 @@ class ExperimentApp(tk.Tk):
         ttk.Label(rules, text="Engine").grid(row=0, column=0, sticky="w", padx=6, pady=5)
         engine_box = ttk.Combobox(rules, textvariable=self.engine, values=("Field", "Particle hybrid"), state="readonly", width=17)
         engine_box.grid(row=0, column=1, columnspan=2, sticky="ew", padx=6, pady=5)
+        engine_box.bind("<<ComboboxSelected>>", lambda _event: self._update_plan_preview())
         self._help(engine_box, "Field uses the established grid model. Particle hybrid uses force-bearing particles coupled to resource and waste fields.")
         self.reproduce = tk.BooleanVar(value=True)
         self.mutate = tk.BooleanVar(value=True)
@@ -481,6 +502,13 @@ class ExperimentApp(tk.Tk):
         ttk.Label(rules, textvariable=self.live_warning, foreground="#996c00", wraplength=280).grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 6))
         for column in range(3):
             rules.columnconfigure(column, weight=1)
+
+        plan = ttk.LabelFrame(config_panel, text="Run plan")
+        plan.pack(fill="x", pady=(0, 8))
+        ttk.Label(plan, textvariable=self.plan_text, wraplength=330, justify="left").pack(side="left", fill="x", expand=True, padx=6, pady=6)
+        plan_button = ttk.Button(plan, text="Refresh", command=self.preview_plan)
+        plan_button.pack(side="right", padx=6, pady=6)
+        self._help(plan_button, "Validate the visible setup and show the number and type of worlds that will run.")
 
         actions = ttk.LabelFrame(config_panel, text="Actions")
         actions.pack(fill="x", pady=(0, 8))
@@ -594,6 +622,7 @@ class ExperimentApp(tk.Tk):
         self.activity_list.pack(side="left", fill="both", expand=True)
         activity_scroll.pack(side="right", fill="y")
         self._help(self.activity_list, "Persistent timeline of important run, report, adaptive-generation, and error events.")
+        self._update_plan_preview()
 
     def jobs(self, broad: bool = False) -> list[dict]:
         seeds = numbers(self.fields["Seeds"].get(), int)
@@ -729,6 +758,7 @@ class ExperimentApp(tk.Tk):
                 self.engine.set(defaults["Engine"])
             self.status.set(f"Adaptive generation {config.get('generation', '?')} loaded: {len(config.get('configs', []))} configs")
             self._log_event(f"Loaded adaptive generation {config.get('generation', '?')} ({len(config.get('configs', []))} configs)")
+            self._update_plan_preview()
             self.help_text.set(f"Adaptive config saved to {output}. Review it, then start the next run.")
         except (OSError, ValueError, json.JSONDecodeError) as error:
             messagebox.showerror("Adaptive config error", str(error))
@@ -761,6 +791,7 @@ class ExperimentApp(tk.Tk):
             self.fields["Adaptive configs"].set(str(len(configs)))
             self.status.set(f"Adaptive generation {config.get('generation', '?')} loaded: {len(configs)} configs ready")
             self._log_event(f"Startup adaptive generation {config.get('generation', '?')} ready ({len(configs)} configs)")
+            self._update_plan_preview()
             self.help_text.set(f"Loaded {path.name}. Review the adaptive settings, then start the next run when ready.")
         except (OSError, ValueError, json.JSONDecodeError):
             self.status.set("Ready - adaptive-next.json could not be loaded")
@@ -803,6 +834,7 @@ class ExperimentApp(tk.Tk):
             self.fields["Adaptive configs"].set(str(len(self.adaptive_configs)))
             self.help_text.set(f"Adaptive campaign loaded from {source_name}; generation {self.adaptive_generation}/{generations} is ready.")
             self._log_event(f"Adaptive campaign starting at generation {self.adaptive_generation}/{generations}")
+            self._update_plan_preview()
             self.start_gpu_particle()
         except (OSError, ValueError, json.JSONDecodeError) as error:
             messagebox.showerror("Adaptive campaign error", str(error))
