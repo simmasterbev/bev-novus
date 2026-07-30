@@ -69,6 +69,8 @@ class ExperimentApp(tk.Tk):
         self.report_choice = tk.StringVar()
         self.report_paths: dict[str, Path] = {}
         self.summary_vars: dict[str, tk.StringVar] = {}
+        self.sort_column = "run"
+        self.sort_reverse = False
         self._build()
         self._load_initial_adaptive()
 
@@ -199,8 +201,9 @@ class ExperimentApp(tk.Tk):
         for index, result in enumerate(self.results, 1):
             snapshot = result.get("_snapshot_path") or result.get("snapshot_path") or f"report:{index}"
             label_text = result.get("label", f"row-{index:04d}")
-            self._add_run_row(snapshot, index, label_text, result.get("seed", ""), "COMPLETE")
-            self._set_run_row(snapshot, "COMPLETE", result)
+            state = "ERROR" if result.get("error") or result.get("_error") else "COMPLETE"
+            self._add_run_row(snapshot, index, label_text, result.get("seed", ""), state)
+            self._set_run_row(snapshot, state, result)
             if Path(snapshot).exists():
                 self._add_live_card(snapshot, index, label_text, result.get("seed", ""))
                 try:
@@ -439,7 +442,7 @@ class ExperimentApp(tk.Tk):
         self.run_table = ttk.Treeview(runs_frame, columns=columns, show="headings", selectmode="extended")
         headings = {"run": "Run", "condition": "Condition", "seed": "Seed", "state": "State", "live": "Live", "births": "Births", "viable": "Viable"}
         for column in columns:
-            self.run_table.heading(column, text=headings[column])
+            self.run_table.heading(column, text=headings[column], command=lambda name=column: self._sort_runs(name))
             self.run_table.column(column, width=230 if column == "condition" else 78, anchor="center")
         self.run_table.column("state", width=110)
         run_scroll = ttk.Scrollbar(runs_frame, orient="vertical", command=self.run_table.yview)
@@ -558,6 +561,7 @@ class ExperimentApp(tk.Tk):
         self.run_started_at = time.perf_counter()
         self.total_jobs = len(jobs)
         self.completed_jobs = 0
+        self._update_summary(0, self.total_jobs)
         self.view_status.set(f"{len(jobs)} simulations loaded • waiting for first frames")
         self.progress.configure(maximum=self.total_jobs, value=0)
         self.start_button.configure(state="disabled")
@@ -694,6 +698,23 @@ class ExperimentApp(tk.Tk):
         if result:
             values[4:7] = (result.get("live", ""), result.get("births", ""), result.get("viable", ""))
         self.run_table.item(iid, values=values)
+
+    def _sort_runs(self, column: str) -> None:
+        if column == self.sort_column:
+            self.sort_reverse = not self.sort_reverse
+        else:
+            self.sort_column = column
+            self.sort_reverse = False
+        items = [(self.run_table.set(iid, column), iid) for iid in self.run_table.get_children("")]
+
+        def key(item: tuple[str, str]):
+            try:
+                return (0, float(item[0]))
+            except (TypeError, ValueError):
+                return (1, item[0].lower())
+
+        for index, (_, iid) in enumerate(sorted(items, key=key, reverse=self.sort_reverse)):
+            self.run_table.move(iid, "", index)
 
     def _selected_paths(self) -> list[str]:
         return [self.row_paths[iid] for iid in self.run_table.selection() if iid in self.row_paths]
@@ -846,6 +867,7 @@ class ExperimentApp(tk.Tk):
         self.run_started_at = time.perf_counter()
         self.gpu_screen_total = config_count * len(seeds)
         self.total_jobs = self.gpu_screen_total + replay_top * len(seeds)
+        self._update_summary(0, self.total_jobs)
         self.progress.configure(maximum=self.total_jobs, value=0)
         self.start_button.configure(state="disabled"); self.broad_button.configure(state="disabled")
         self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled"); self.particle_campaign_button.configure(state="disabled"); self.adaptive_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
@@ -907,11 +929,15 @@ class ExperimentApp(tk.Tk):
             self._add_run_row(str(snapshot), index, job["label"], job["seed"])
         self.stop_event.clear()
         self.total_jobs = len(jobs)
+        self._update_summary(0, self.total_jobs)
         self.progress.configure(maximum=self.total_jobs, value=0)
         self.start_button.configure(state="disabled"); self.broad_button.configure(state="disabled")
         self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled")
         self.particle_campaign_button.configure(state="disabled"); self.adaptive_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
         self.status.set(f"GPU particle campaign: {len(jobs)} worlds in batches of {batch_size}")
+        for job in jobs:
+            self._set_run_row(job["snapshot_path"], "RUNNING")
+        self.view_status.set(f"{len(jobs)} particle worlds • GPU batches active")
         self.worker = threading.Thread(target=self._run_gpu_particle, args=(jobs, int(self.fields["Steps"].get()), batch_size, output), daemon=True)
         self.worker.start()
 
@@ -934,6 +960,7 @@ class ExperimentApp(tk.Tk):
             else:
                 self.status.set(f"{message}: {done:.0f}/{total}")
                 self._update_eta(done, total)
+            self.view_status.set(f"GPU progress • {done:.0f}/{total} world checkpoints")
         self.after(0, update)
 
     def add_gpu_particle_report(self, report: dict) -> None:
