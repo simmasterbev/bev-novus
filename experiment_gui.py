@@ -63,6 +63,7 @@ class ExperimentApp(tk.Tk):
         self.adaptive_elite_count = 6
         self.adaptive_source_path: Path | None = None
         self.run_mode = "idle"
+        self.run_active = False
         self.report_config: dict | None = None
         self.last_report_path: Path | None = None
         self.run_started_at = 0.0
@@ -81,6 +82,15 @@ class ExperimentApp(tk.Tk):
     def _help(self, widget: tk.Widget, text: str) -> None:
         widget.bind("<Enter>", lambda _event: self.help_text.set(text))
         widget.bind("<FocusIn>", lambda _event: self.help_text.set(text))
+
+    def _set_run_controls(self, running: bool) -> None:
+        state = "disabled" if running else "normal"
+        for button in (self.start_button, self.broad_button, self.gpu_button,
+                       self.overnight_button, self.particle_campaign_button,
+                       self.adaptive_campaign_button):
+            button.configure(state=state)
+        self.stop_button.configure(state="normal" if running else "disabled")
+        self.run_active = running
 
     def _config_snapshot(self) -> dict:
         return {
@@ -194,8 +204,8 @@ class ExperimentApp(tk.Tk):
             self.summary_vars["births"].set(f"{births:,.0f}")
 
     def load_report(self) -> None:
-        if self.stop_button["state"] == "normal" and not messagebox.askyesno(
-                "Load report", "A run is active. Replace its live dashboard with a saved report?"):
+        if self.run_active:
+            messagebox.showinfo("Run active", "Stop the active run before loading a historical report.")
             return
         label = self.report_choice.get().strip()
         path = self.report_paths.get(label)
@@ -246,6 +256,9 @@ class ExperimentApp(tk.Tk):
         self.workspace.select(self.runs_frame)
 
     def apply_report_setup(self) -> None:
+        if self.run_active:
+            messagebox.showinfo("Run active", "Stop the active run before replacing the current setup.")
+            return
         if not self.report_config:
             messagebox.showinfo("Report setup", "This report does not contain a saved GUI setup.")
             return
@@ -435,7 +448,7 @@ class ExperimentApp(tk.Tk):
             button.grid(row=index // 2, column=index % 2, sticky="ew", padx=5, pady=4)
             setattr(self, attribute, button)
             self._help(button, explanation)
-        self.stop_button.configure(state="disabled")
+        self._set_run_controls(False)
         for column in range(2):
             actions.columnconfigure(column, weight=1)
         ttk.Label(config_panel, textvariable=self.help_text, relief="groove", anchor="w", justify="left", wraplength=330).pack(fill="x", pady=(0, 6))
@@ -607,13 +620,7 @@ class ExperimentApp(tk.Tk):
         self._update_summary(0, self.total_jobs)
         self.view_status.set(f"{len(jobs)} simulations loaded • waiting for first frames")
         self.progress.configure(maximum=self.total_jobs, value=0)
-        self.start_button.configure(state="disabled")
-        self.broad_button.configure(state="disabled")
-        self.gpu_button.configure(state="disabled")
-        self.overnight_button.configure(state="disabled")
-        self.particle_campaign_button.configure(state="disabled")
-        self.adaptive_campaign_button.configure(state="disabled")
-        self.stop_button.configure(state="normal")
+        self._set_run_controls(True)
         self.status.set(f"Running 0/{len(jobs)} — {workers} parallel workers — generating results")
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
         self.worker.start()
@@ -940,8 +947,7 @@ class ExperimentApp(tk.Tk):
         self.total_jobs = self.gpu_screen_total + replay_top * len(seeds)
         self._update_summary(0, self.total_jobs)
         self.progress.configure(maximum=self.total_jobs, value=0)
-        self.start_button.configure(state="disabled"); self.broad_button.configure(state="disabled")
-        self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled"); self.particle_campaign_button.configure(state="disabled"); self.adaptive_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
+        self._set_run_controls(True)
         self.status.set(f"Preparing {self.gpu_screen_total} GPU screens")
         configs = latin_hypercube(config_count, seed=7)
         output = self._new_output_dir("gpu-snapshots")
@@ -1004,9 +1010,7 @@ class ExperimentApp(tk.Tk):
         self.total_jobs = len(jobs)
         self._update_summary(0, self.total_jobs)
         self.progress.configure(maximum=self.total_jobs, value=0)
-        self.start_button.configure(state="disabled"); self.broad_button.configure(state="disabled")
-        self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled")
-        self.particle_campaign_button.configure(state="disabled"); self.adaptive_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
+        self._set_run_controls(True)
         self.status.set(f"GPU particle campaign: {len(jobs)} worlds in batches of {batch_size}")
         for job in jobs:
             self._set_run_row(job["snapshot_path"], "RUNNING")
@@ -1166,13 +1170,7 @@ class ExperimentApp(tk.Tk):
         self.status.set(f"Results generated: {completed}/{total} — {total - completed} remaining")
 
     def finished(self, completed: int, total: int) -> None:
-        self.start_button.configure(state="normal")
-        self.broad_button.configure(state="normal")
-        self.gpu_button.configure(state="normal")
-        self.overnight_button.configure(state="normal")
-        self.particle_campaign_button.configure(state="normal")
-        self.adaptive_campaign_button.configure(state="normal")
-        self.stop_button.configure(state="disabled")
+        self._set_run_controls(False)
         self.progress.configure(value=completed)
         self._update_summary(completed, total)
         if self.run_mode in ("grid", "broad") and self.results and not self.stop_event.is_set():
