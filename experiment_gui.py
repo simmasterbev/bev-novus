@@ -145,7 +145,7 @@ class ExperimentApp(tk.Tk):
         state = "disabled" if running else "normal"
         for button in (self.start_button, self.broad_button, self.gpu_button,
                        self.overnight_button, self.particle_campaign_button,
-                       self.adaptive_campaign_button):
+                       self.adaptive_campaign_button, self.export_button):
             button.configure(state=state)
         self.stop_button.configure(state="normal" if running else "disabled")
         self.run_active = running
