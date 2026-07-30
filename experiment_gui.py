@@ -15,6 +15,7 @@ from broad_sweep import latin_hypercube
 from adaptive_config import build_next_config
 from experiments import run_condition, run_particle_condition
 from gui_config import delete_preset, list_presets, load_preset, save_preset
+from gui_reports import archive_report, delete_report as delete_report_file, list_report_paths, read_report
 from gui_schema import EXPLANATIONS, FIELD_SPECS, dynamic_rules
 from gpu_sweep import run_gpu_particle_campaign, screen_and_replay
 from morrow import reproduction_preflight
@@ -179,9 +180,7 @@ class ExperimentApp(tk.Tk):
 
     def _refresh_reports(self) -> None:
         results_dir = Path(__file__).with_name("Results")
-        paths = [path for path in results_dir.glob("*.json") if path.name != "adaptive-next.json"]
-        paths += list((results_dir / "adaptive-campaign").glob("*.json"))
-        paths.sort(key=lambda path: path.stat().st_mtime_ns if path.exists() else 0, reverse=True)
+        paths = list_report_paths(results_dir)
         self.report_paths = {}
         labels = []
         for path in paths:
@@ -211,11 +210,7 @@ class ExperimentApp(tk.Tk):
 
     @staticmethod
     def _archive_report(prefix: str, report: dict) -> Path:
-        root = Path(__file__).with_name("Results")
-        root.mkdir(parents=True, exist_ok=True)
-        path = root / f"{prefix}-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1000000:06d}.json"
-        path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-        return path
+        return archive_report(Path(__file__).with_name("Results"), prefix, report)
 
     def _report_rows(self) -> list[dict]:
         rows = []
@@ -272,12 +267,8 @@ class ExperimentApp(tk.Tk):
             messagebox.showinfo("Report history", "Choose a saved report first.")
             return
         try:
-            report = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(report, dict):
-                raise ValueError("That JSON file is not a report object.")
+            report = read_report(path)
             rows = report.get("replays") or report.get("results") or report.get("screening") or []
-            if not isinstance(rows, list) or not rows:
-                raise ValueError("That JSON file does not contain report rows.")
         except (OSError, ValueError, json.JSONDecodeError) as error:
             messagebox.showerror("Report history", str(error))
             return
@@ -340,20 +331,11 @@ class ExperimentApp(tk.Tk):
         if not path:
             messagebox.showinfo("Report history", "Choose a saved report first.")
             return
-        results_dir = Path(__file__).with_name("Results").resolve()
-        allowed = {results_dir, results_dir / "adaptive-campaign"}
-        try:
-            resolved = path.resolve()
-            if resolved.parent not in allowed or resolved.suffix.lower() != ".json":
-                raise ValueError("Only GUI report files under Results can be deleted.")
-        except (OSError, ValueError) as error:
-            messagebox.showerror("Report history", str(error))
-            return
         if not messagebox.askyesno("Delete report", f"Delete report '{label}'? Snapshot images will be kept."):
             return
         try:
-            resolved.unlink()
-        except OSError as error:
+            delete_report_file(path, Path(__file__).with_name("Results"))
+        except (OSError, ValueError) as error:
             messagebox.showerror("Report history", str(error))
             return
         self._refresh_reports()
