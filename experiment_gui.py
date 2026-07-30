@@ -77,6 +77,9 @@ class ExperimentApp(tk.Tk):
         self.preset_name = tk.StringVar()
         self.preset_choice = tk.StringVar()
         self.report_choice = tk.StringVar()
+        self.setup_widgets: list[tk.Widget] = []
+        self.history_widgets: list[tk.Widget] = []
+        self.active_run_config: dict | None = None
         self.report_paths: dict[str, Path] = {}
         self.summary_vars: dict[str, tk.StringVar] = {}
         self.sort_column = "run"
@@ -147,8 +150,16 @@ class ExperimentApp(tk.Tk):
                        self.overnight_button, self.particle_campaign_button,
                        self.adaptive_campaign_button, self.export_button):
             button.configure(state=state)
+        for widget in self.setup_widgets + self.history_widgets:
+            if isinstance(widget, ttk.Combobox):
+                widget.configure(state="disabled" if running else "readonly")
+            else:
+                widget.configure(state=state)
         self.stop_button.configure(state="normal" if running else "disabled")
         self.run_active = running
+
+    def _report_config_snapshot(self) -> dict:
+        return self.active_run_config or self._config_snapshot()
 
     def _config_snapshot(self) -> dict:
         return {
@@ -228,6 +239,7 @@ class ExperimentApp(tk.Tk):
         self.particle_gpu_report = None
         self.report_config = None
         self.last_report_path = None
+        self.active_run_config = None
         self.run_mode = "idle"
         self.detail_text.set("Select a run to inspect its metrics and saved frame.")
         for child in self.visual_inner.winfo_children():
@@ -461,6 +473,7 @@ class ExperimentApp(tk.Tk):
                 self.fields[label] = variable
                 entry = ttk.Entry(tab, textvariable=variable, width=16)
                 entry.grid(row=row * 2 + 1, column=column, sticky="ew", padx=4, pady=(0, 3))
+                self.setup_widgets.append(entry)
                 entry.bind("<KeyRelease>", lambda _event: self._update_plan_preview())
                 self._help(entry, EXPLANATIONS[label])
             for column in range(2):
@@ -471,19 +484,26 @@ class ExperimentApp(tk.Tk):
         ttk.Label(library, text="Choose").grid(row=0, column=0, sticky="w", padx=6, pady=5)
         self.preset_box = ttk.Combobox(library, textvariable=self.preset_choice, state="readonly", width=22)
         self.preset_box.grid(row=0, column=1, columnspan=2, sticky="ew", padx=6, pady=5)
+        self.setup_widgets.append(self.preset_box)
         ttk.Label(library, text="Name").grid(row=1, column=0, sticky="w", padx=6, pady=5)
         preset_name = ttk.Entry(library, textvariable=self.preset_name)
         preset_name.grid(row=1, column=1, columnspan=2, sticky="ew", padx=6, pady=5)
+        self.setup_widgets.append(preset_name)
         load_button = ttk.Button(library, text="Load", command=self.load_preset)
         load_button.grid(row=2, column=0, sticky="ew", padx=6, pady=5)
+        self.setup_widgets.append(load_button)
         save_button = ttk.Button(library, text="Save", command=self.save_preset)
         save_button.grid(row=2, column=1, sticky="ew", padx=6, pady=5)
+        self.setup_widgets.append(save_button)
         delete_button = ttk.Button(library, text="Delete", command=self.delete_preset)
         delete_button.grid(row=2, column=2, sticky="ew", padx=6, pady=5)
+        self.setup_widgets.append(delete_button)
         import_button = ttk.Button(library, text="Import", command=self.import_setup)
         import_button.grid(row=3, column=0, sticky="ew", padx=6, pady=5)
+        self.setup_widgets.append(import_button)
         export_button = ttk.Button(library, text="Export", command=self.export_setup)
         export_button.grid(row=3, column=1, columnspan=2, sticky="ew", padx=6, pady=5)
+        self.setup_widgets.append(export_button)
         for column in range(3):
             library.columnconfigure(column, weight=1)
         for widget, text in ((self.preset_box, "Choose a saved configuration managed by the GUI."),
@@ -501,6 +521,7 @@ class ExperimentApp(tk.Tk):
         ttk.Label(rules, text="Engine").grid(row=0, column=0, sticky="w", padx=6, pady=5)
         engine_box = ttk.Combobox(rules, textvariable=self.engine, values=("Field", "Particle hybrid"), state="readonly", width=17)
         engine_box.grid(row=0, column=1, columnspan=2, sticky="ew", padx=6, pady=5)
+        self.setup_widgets.append(engine_box)
         engine_box.bind("<<ComboboxSelected>>", lambda _event: self._update_plan_preview())
         self._help(engine_box, "Field uses the established grid model. Particle hybrid uses force-bearing particles coupled to resource and waste fields.")
         self.reproduce = tk.BooleanVar(value=True)
@@ -517,9 +538,11 @@ class ExperimentApp(tk.Tk):
                                                     ("Recycling", self.recycle), ("Spatial resources", self.spatial))):
             checkbox = ttk.Checkbutton(rules, text=label, variable=variable)
             checkbox.grid(row=1 + index // 2, column=index % 2, sticky="w", padx=6, pady=4)
+            self.setup_widgets.append(checkbox)
             self._help(checkbox, rule_help[label])
         live_check = ttk.Checkbutton(rules, text="Live previews", variable=self.live_previews, command=self._toggle_live_previews)
         live_check.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        self.setup_widgets.append(live_check)
         self._help(live_check, "Show refreshed images for active runs. This adds disk and GUI work; many previews can cause lag.")
         ttk.Label(rules, textvariable=self.live_warning, foreground="#996c00", wraplength=280).grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 6))
         for column in range(3):
@@ -530,11 +553,13 @@ class ExperimentApp(tk.Tk):
         ttk.Label(plan, textvariable=self.plan_text, wraplength=330, justify="left").pack(side="left", fill="x", expand=True, padx=6, pady=6)
         plan_button = ttk.Button(plan, text="Refresh", command=self.preview_plan)
         plan_button.pack(side="right", padx=6, pady=6)
+        self.setup_widgets.append(plan_button)
         self._help(plan_button, "Validate the visible setup and show the number and type of worlds that will run.")
         ttk.Label(plan, textvariable=self.adaptive_status, foreground="#667085", wraplength=330,
                   justify="left").pack(fill="x", padx=6, pady=(0, 4))
         clear_adaptive = ttk.Button(plan, text="Clear adaptive handoff", command=self.clear_adaptive_handoff)
         clear_adaptive.pack(fill="x", padx=6, pady=(0, 6))
+        self.setup_widgets.append(clear_adaptive)
         self._help(clear_adaptive, "Stop using the loaded adaptive candidate set. The next run will use the visible setup values.")
 
         actions = ttk.LabelFrame(config_panel, text="Actions")
@@ -577,14 +602,19 @@ class ExperimentApp(tk.Tk):
         ttk.Label(history, text="Saved report").pack(side="left", padx=6, pady=5)
         self.report_box = ttk.Combobox(history, textvariable=self.report_choice, state="readonly", width=42)
         self.report_box.pack(side="left", fill="x", expand=True, padx=6, pady=5)
+        self.history_widgets.append(self.report_box)
         report_load = ttk.Button(history, text="Load report", command=self.load_report)
         report_load.pack(side="left", padx=3, pady=5)
+        self.history_widgets.append(report_load)
         self.report_setup_button = ttk.Button(history, text="Use setup", command=self.apply_report_setup)
         self.report_setup_button.pack(side="left", padx=3, pady=5)
+        self.history_widgets.append(self.report_setup_button)
         report_delete = ttk.Button(history, text="Delete", command=self.delete_report)
         report_delete.pack(side="left", padx=3, pady=5)
+        self.history_widgets.append(report_delete)
         report_refresh = ttk.Button(history, text="Refresh", command=self._refresh_reports)
         report_refresh.pack(side="left", padx=3, pady=5)
+        self.history_widgets.append(report_refresh)
         self._help(self.report_box, "Choose a saved report discovered in Results or Results/adaptive-campaign.")
         self._help(report_load, "Load historical rows and matching saved frames into the dashboard without opening the filesystem.")
         self._help(self.report_setup_button, "Restore the saved GUI controls from the selected report so it can be rerun or modified.")
@@ -734,6 +764,7 @@ class ExperimentApp(tk.Tk):
         self.gpu_report = None
         self.particle_gpu_report = None
         self.report_config = None
+        self.active_run_config = self._config_snapshot()
         for child in self.visual_inner.winfo_children():
             child.destroy()
         self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
@@ -1124,6 +1155,7 @@ class ExperimentApp(tk.Tk):
             return
         self.status.set(f"Preflight passed: {check['births']} mutation checks")
         self.results.clear(); self.gpu_report = None; self.particle_gpu_report = None; self.report_config = None; self.last_report_path = None; self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
+        self.active_run_config = self._config_snapshot()
         self.run_table.delete(*self.run_table.get_children())
         self.visual_filter = None; self.visual_scale = 2; self.visual_zoom_choice.set("2x")
         for child in self.visual_inner.winfo_children():
@@ -1187,6 +1219,7 @@ class ExperimentApp(tk.Tk):
             messagebox.showerror("Invalid GPU particle setup", str(error))
             return
         self.results.clear(); self.gpu_report = None; self.particle_gpu_report = None; self.report_config = None; self.last_report_path = None
+        self.active_run_config = self._config_snapshot()
         self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
         self.run_table.delete(*self.run_table.get_children())
         self.visual_filter = None; self.visual_scale = 2; self.visual_zoom_choice.set("2x")
@@ -1244,7 +1277,7 @@ class ExperimentApp(tk.Tk):
 
     def add_gpu_particle_report(self, report: dict) -> None:
         report = dict(report)
-        report["gui_config"] = self._config_snapshot()
+        report["gui_config"] = self._report_config_snapshot()
         self.particle_gpu_report = report
         self._log_event(f"Particle-GPU report received: {len(report.get('results', []))} worlds")
         report_path = Path(__file__).with_name("Results") / "gui-particle-gpu-latest.json"
@@ -1305,7 +1338,7 @@ class ExperimentApp(tk.Tk):
 
     def add_gpu_report(self, report: dict) -> None:
         report = dict(report)
-        report["gui_config"] = self._config_snapshot()
+        report["gui_config"] = self._report_config_snapshot()
         self.gpu_report = report
         self._log_event(f"Field-GPU report received: {len(report.get('replays', []))} replays")
         report_path = Path(__file__).with_name("Results") / "gui-gpu-latest.json"
@@ -1388,9 +1421,9 @@ class ExperimentApp(tk.Tk):
                 "schema": "bev-novus-gui-report-v1",
                 "backend": "gui-cpu",
                 "mode": self.run_mode,
-                "steps": self.fields["Steps"].get(),
+                "steps": (self.active_run_config or {}).get("fields", {}).get("Steps", self.fields["Steps"].get()),
                 "results": self._report_rows(),
-                "gui_config": self._config_snapshot(),
+                "gui_config": self._report_config_snapshot(),
             }
             prefix = "gui-broad" if self.run_mode == "broad" else "gui-grid"
             self.last_report_path = self._archive_report(prefix, report)
@@ -1401,6 +1434,7 @@ class ExperimentApp(tk.Tk):
             self.status.set(f"Finished - {completed}/{total} results saved as {self.last_report_path.name}")
         self._log_event("Run stopped" if self.stop_event.is_set() else f"Run finished: {completed}/{total} results")
         self.view_status.set(f"{len(self.live_cards)} simulations • {completed}/{total} {'stopped' if self.stop_event.is_set() else 'complete'}")
+        self.active_run_config = None
 
     def stop(self) -> None:
         if not self.run_active:
