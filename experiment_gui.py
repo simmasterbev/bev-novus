@@ -111,7 +111,9 @@ class ExperimentApp(tk.Tk):
 
     def _refresh_reports(self) -> None:
         results_dir = Path(__file__).with_name("Results")
-        paths = sorted(results_dir.glob("*.json")) + sorted((results_dir / "adaptive-campaign").glob("*.json"))
+        paths = [path for path in results_dir.glob("*.json") if path.name != "adaptive-next.json"]
+        paths += list((results_dir / "adaptive-campaign").glob("*.json"))
+        paths.sort(key=lambda path: path.stat().st_mtime_ns if path.exists() else 0, reverse=True)
         self.report_paths = {}
         labels = []
         for path in paths:
@@ -147,11 +149,23 @@ class ExperimentApp(tk.Tk):
         path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         return path
 
+    def _report_rows(self) -> list[dict]:
+        rows = []
+        for result in self.results:
+            row = {key: value for key, value in result.items() if not key.startswith("_")}
+            snapshot = result.get("_snapshot_path")
+            if snapshot:
+                row["snapshot_path"] = snapshot
+            rows.append(row)
+        return rows
+
     def _clear_run_view(self) -> None:
         self.results.clear()
         self.gpu_report = None
         self.report_config = None
         self.last_report_path = None
+        self.run_mode = "idle"
+        self.detail_text.set("Select a run to inspect its metrics and saved frame.")
         self.particle_gpu_report = None
         for child in self.visual_inner.winfo_children():
             child.destroy()
@@ -1167,8 +1181,7 @@ class ExperimentApp(tk.Tk):
                 "backend": "gui-cpu",
                 "mode": self.run_mode,
                 "steps": self.fields["Steps"].get(),
-                "results": [{key: value for key, value in result.items() if not key.startswith("_")}
-                            for result in self.results],
+                "results": self._report_rows(),
                 "gui_config": self._config_snapshot(),
             }
             prefix = "gui-broad" if self.run_mode == "broad" else "gui-grid"
@@ -1190,7 +1203,7 @@ class ExperimentApp(tk.Tk):
             return
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=(("JSON", "*.json"), ("All files", "*.*")))
         if path:
-            exportable = self.particle_gpu_report or self.gpu_report or [{key: value for key, value in result.items() if not key.startswith("_")} for result in self.results]
+            exportable = self.particle_gpu_report or self.gpu_report or self._report_rows()
             Path(path).write_text(json.dumps(exportable, indent=2), encoding="utf-8")
             self.status.set(f"Saved {Path(path).name}")
 
