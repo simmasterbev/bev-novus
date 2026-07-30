@@ -225,11 +225,11 @@ class ExperimentApp(tk.Tk):
     def _clear_run_view(self) -> None:
         self.results.clear()
         self.gpu_report = None
+        self.particle_gpu_report = None
         self.report_config = None
         self.last_report_path = None
         self.run_mode = "idle"
         self.detail_text.set("Select a run to inspect its metrics and saved frame.")
-        self.particle_gpu_report = None
         for child in self.visual_inner.winfo_children():
             child.destroy()
         self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
@@ -721,6 +721,8 @@ class ExperimentApp(tk.Tk):
             return
         self.results.clear()
         self.gpu_report = None
+        self.particle_gpu_report = None
+        self.report_config = None
         for child in self.visual_inner.winfo_children():
             child.destroy()
         self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
@@ -1110,7 +1112,7 @@ class ExperimentApp(tk.Tk):
             messagebox.showerror("GPU preflight failed", str(error))
             return
         self.status.set(f"Preflight passed: {check['births']} mutation checks")
-        self.results.clear(); self.gpu_report = None; self.report_config = None; self.last_report_path = None; self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
+        self.results.clear(); self.gpu_report = None; self.particle_gpu_report = None; self.report_config = None; self.last_report_path = None; self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
         self.run_table.delete(*self.run_table.get_children())
         self.visual_filter = None; self.visual_scale = 2; self.visual_zoom_choice.set("2x")
         for child in self.visual_inner.winfo_children():
