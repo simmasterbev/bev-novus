@@ -369,6 +369,16 @@ class ExperimentApp(tk.Tk):
             "Performance": [("Workers", "3"), ("Broad configs", "256"), ("GPU screen steps", "20000"),
                             ("GPU batch", "64"), ("Replay top", "8")],
             "Adaptive": [("Adaptive generations", "1"), ("Adaptive configs", "24"), ("Adaptive elites", "6")],
+            "Dynamics": [("Metabolism", "0.035"), ("Diffusion", "0.5"),
+                         ("Waste inhibition", "0.1"), ("Recycle rate", "0.1"),
+                         ("Seed interval", "20"), ("Source scale", "0.5"),
+                         ("Steering", "5.0"), ("Seed fraction", "0.05"),
+                         ("Mutation scale", "0.02"), ("Resource patches", "5"),
+                         ("Body patches", "5"), ("Resource strength", "1.15"),
+                         ("Body strength", "1.5"), ("Resource regrowth", "0.01"),
+                         ("Resource capacity", "1.0"), ("Waste decay", "0.02"),
+                         ("Waste diffusion", "0.02"), ("Dormancy threshold", "0.06"),
+                         ("Dormancy cost", "0.15"), ("Complexity pressure", "0.65")],
         }
         explanations = {
             "Seeds": "Comma-separated random seeds. Reusing a seed makes conditions reproducible.",
@@ -385,6 +395,26 @@ class ExperimentApp(tk.Tk):
             "Adaptive generations": "Number of automatic result-to-next-run iterations.",
             "Adaptive configs": "Number of configurations generated per adaptive generation.",
             "Adaptive elites": "Number of top configurations copied unchanged into the next generation.",
+            "Metabolism": "Resource intake rate used by standard field and particle jobs.",
+            "Diffusion": "Resource and body-field transport strength used by the field engine.",
+            "Waste inhibition": "How strongly local waste suppresses resource intake.",
+            "Recycle rate": "Fraction of recyclable waste returned to the resource field.",
+            "Seed interval": "Minimum interval between field-engine seed emissions.",
+            "Source scale": "Spatial scale of resource-source patches in standard jobs.",
+            "Steering": "Strength of field-body movement toward resource and away from waste.",
+            "Seed fraction": "Fraction of body mass used when a field seed is emitted.",
+            "Mutation scale": "Magnitude of inherited trait mutation in field births.",
+            "Resource patches": "Number of spatial resource patches in standard worlds.",
+            "Body patches": "Number of starting body patches or particle groups.",
+            "Resource strength": "Initial strength of resource patches.",
+            "Body strength": "Initial body mass or strength of starting patches.",
+            "Resource regrowth": "Rate at which depleted resources regrow.",
+            "Resource capacity": "Maximum local resource capacity.",
+            "Waste decay": "Per-step decay rate for waste in standard field worlds.",
+            "Waste diffusion": "Transport strength for waste in standard field worlds.",
+            "Dormancy threshold": "Body-mass threshold below which dormancy cost applies.",
+            "Dormancy cost": "Additional decay multiplier for dormant bodies.",
+            "Complexity pressure": "Selection pressure favoring more complex field patterns.",
         }
         for tab_name, specs in field_specs.items():
             tab = ttk.Frame(settings, padding=6)
@@ -582,6 +612,7 @@ class ExperimentApp(tk.Tk):
                      "mutate": self.mutate.get(), "recycle": self.recycle.get(),
                      "spatial": self.spatial.get(), "engine": engine, **config}
                     for index, config in enumerate(configs, 1) for seed in seeds]
+        dynamic = self._dynamic_rules()
         if engine == "particle" and self.adaptive_configs:
             jobs = []
             for index, config in enumerate(self.adaptive_configs, 1):
@@ -591,7 +622,7 @@ class ExperimentApp(tk.Tk):
                         "body_yield": config["body_yield"], "decay_rate": config["decay_rate"],
                         "sample_every": sample_every, "reproduce": self.reproduce.get(),
                         "mutate": self.mutate.get(), "recycle": self.recycle.get(),
-                        "spatial": self.spatial.get(), **config, "engine": engine,
+                        "spatial": self.spatial.get(), **dynamic, **config, "engine": engine,
                     })
             return jobs
         yields = numbers(self.fields["Body yield"].get())
@@ -607,16 +638,29 @@ class ExperimentApp(tk.Tk):
                         "reproduce": self.reproduce.get(), "mutate": self.mutate.get(),
                         "recycle": self.recycle.get(), "spatial": self.spatial.get(),
                      "metabolism": 0.035, "diffusion": 0.5, "waste_inhibition": 0.1,
-                        "recycle_rate": 0.1, "seed_interval": 20, "source_scale": 0.5,
-                        "steering": 5.0, "seed_fraction": 0.05, "mutation_scale": 0.02,
-                        "resource_patches": 5, "body_patches": 5, "resource_strength": 1.15,
-                        "body_strength": 1.5, "resource_regrowth": 0.01, "resource_capacity": 1.0,
-                        "waste_decay": 0.02, "waste_diffusion": 0.02,
-                        "dormancy_threshold": 0.06, "dormancy_cost": 0.15,
-                        "complexity_pressure": 0.65,
+                        **dynamic,
                         "engine": engine,
                     })
         return jobs
+
+    def _dynamic_rules(self) -> dict:
+        integer_rules = {"Seed interval", "Resource patches", "Body patches"}
+        rules = {}
+        for label, name in (("Metabolism", "metabolism"), ("Diffusion", "diffusion"),
+                            ("Waste inhibition", "waste_inhibition"), ("Recycle rate", "recycle_rate"),
+                            ("Seed interval", "seed_interval"), ("Source scale", "source_scale"),
+                            ("Steering", "steering"), ("Seed fraction", "seed_fraction"),
+                            ("Mutation scale", "mutation_scale"), ("Resource patches", "resource_patches"),
+                            ("Body patches", "body_patches"), ("Resource strength", "resource_strength"),
+                            ("Body strength", "body_strength"), ("Resource regrowth", "resource_regrowth"),
+                            ("Resource capacity", "resource_capacity"), ("Waste decay", "waste_decay"),
+                            ("Waste diffusion", "waste_diffusion"), ("Dormancy threshold", "dormancy_threshold"),
+                            ("Dormancy cost", "dormancy_cost"), ("Complexity pressure", "complexity_pressure")):
+            values = numbers(self.fields[label].get(), int if label in integer_rules else float)
+            if len(values) != 1:
+                raise ValueError(f"{label} accepts one value; use Broad sweep for sampled ranges.")
+            rules[name] = values[0]
+        return rules
 
     def start(self, broad: bool = False) -> None:
         if self.adaptive_configs and not broad and self.engine.get() == "Particle hybrid":
