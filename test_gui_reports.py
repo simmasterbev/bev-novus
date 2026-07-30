@@ -34,6 +34,15 @@ class GuiReportTests(unittest.TestCase):
             report.write_text(json.dumps({"results": [{"live": 1}]}), encoding="utf-8")
             self.assertEqual([report], list_report_paths(root))
 
+    def test_report_validation_cache_rechecks_changed_files(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            report = root / "report.json"
+            report.write_text("[]", encoding="utf-8")
+            self.assertEqual([], list_report_paths(root))
+            report.write_text(json.dumps({"results": [{"live": 1}]}), encoding="utf-8")
+            self.assertEqual([report], list_report_paths(root))
+
     def test_delete_rejects_report_outside_managed_directories(self):
         with tempfile.TemporaryDirectory() as folder, tempfile.TemporaryDirectory() as outside:
             root = Path(folder)

@@ -7,16 +7,33 @@ import time
 from pathlib import Path
 
 
+_REPORT_VALIDATION_CACHE: dict[str, tuple[int, int, bool]] = {}
+
+
+def _is_loadable_report(path: Path) -> bool:
+    try:
+        stat = path.stat()
+    except OSError:
+        return False
+    key = str(path.resolve())
+    signature = (stat.st_mtime_ns, stat.st_size)
+    cached = _REPORT_VALIDATION_CACHE.get(key)
+    if cached and cached[:2] == signature:
+        return cached[2]
+    try:
+        read_report(path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        valid = False
+    else:
+        valid = True
+    _REPORT_VALIDATION_CACHE[key] = (*signature, valid)
+    return valid
+
+
 def list_report_paths(results_dir: Path) -> list[Path]:
     candidates = [path for path in results_dir.glob("*.json") if path.name != "adaptive-next.json"]
     candidates += list((results_dir / "adaptive-campaign").glob("*.json"))
-    paths = []
-    for path in candidates:
-        try:
-            read_report(path)
-        except (OSError, ValueError, json.JSONDecodeError):
-            continue
-        paths.append(path)
+    paths = [path for path in candidates if _is_loadable_report(path)]
     return sorted(paths, key=lambda path: path.stat().st_mtime_ns if path.exists() else 0, reverse=True)
 
 
