@@ -16,7 +16,7 @@ from typing import Callable
 import numpy as np
 
 from broad_sweep import latin_hypercube
-from experiments import _write_particle_ppm, run_condition
+from experiments import _atomic_snapshot, _write_particle_ppm, run_condition
 from morrow import World
 from particle_prototype import HybridParticleWorld
 
@@ -227,6 +227,21 @@ class GpuParticleBatch:
         self.masses = cp.maximum(0.0, self.masses - decay)
         self.waste += self._scatter(rows, columns, decay)
 
+    def _snapshot_worlds(self) -> list[HybridParticleWorld]:
+        positions, masses, resource, waste = (self.cp.asnumpy(value)
+                                               for value in (self.positions, self.masses, self.resource, self.waste))
+        worlds = []
+        for job, position, mass, resource_field, waste_field in zip(self.jobs, positions, masses, resource, waste):
+            world = HybridParticleWorld.seeded(seed=job["seed"], count=len(mass))
+            world.particle.positions, world.particle.masses = position, mass
+            world.resource, world.waste = resource_field, waste_field
+            worlds.append(world)
+        return worlds
+
+    def write_snapshots(self) -> None:
+        for job, world in zip(self.jobs, self._snapshot_worlds()):
+            _atomic_snapshot(Path(job["snapshot_path"]), lambda path, world=world: _write_particle_ppm(world, path))
+
     def results(self) -> list[dict]:
         cp = self.cp
         current = cp.sum(self.masses, axis=1, dtype=cp.float64) + cp.sum(self.resource + self.waste, axis=(1, 2), dtype=cp.float64)
@@ -234,26 +249,24 @@ class GpuParticleBatch:
                                       cp.sum(self.masses, axis=1, dtype=cp.float64),
                                       cp.abs(current - self.initial_mass - self.external),
                                       cp.isfinite(current)), axis=1))
-        positions, masses, resource, waste = (cp.asnumpy(value) for value in (self.positions, self.masses, self.resource, self.waste))
+        worlds = self._snapshot_worlds()
         rows = []
-        for index, (job, value) in enumerate(zip(self.jobs, values)):
-            world = HybridParticleWorld.seeded(seed=job["seed"], count=len(masses[index]))
-            world.particle.positions, world.particle.masses = positions[index], masses[index]
-            world.resource, world.waste = resource[index], waste[index]
-            _write_particle_ppm(world, Path(job["snapshot_path"]))
+        for index, (job, value, world) in enumerate(zip(self.jobs, values, worlds)):
+            _atomic_snapshot(Path(job["snapshot_path"]), lambda path, world=world: _write_particle_ppm(world, path))
             live, body_mass, drift, finite = value
             rows.append({"label": job["label"], "seed": job["seed"], "live": int(live), "births": 0, "viable": 0,
                          "config": {name: job[name] for name in ("body_yield", "decay_rate", "metabolism",
                                                                     "resource_regrowth", "resource_capacity", "body_strength") if name in job},
                          "trait_diversity": 0.0, "niches": 0.0, "mass_drift": float(drift),
-                         "compactness": float(min(1.0, live / max(len(masses[index]), 1))),
+                         "compactness": float(min(1.0, live / max(len(world.particle.masses), 1))),
                          "boundary_ratio": 0.0, "identity_ambiguity": 0.0, "groups": 0.0,
                          "body_mass": float(body_mass), "finite": bool(finite), "_snapshot_path": job["snapshot_path"]})
         return rows
 
 
 def run_gpu_particle_campaign(jobs: list[dict], steps: int, batch_size: int, output_dir: Path,
-                              progress: Progress | None = None, stopped: Callable[[], bool] | None = None) -> dict:
+                              progress: Progress | None = None, stopped: Callable[[], bool] | None = None, *,
+                              live_previews: bool = False, live_snapshot_every: int = 250) -> dict:
     output_dir.mkdir(parents=True, exist_ok=True)
     results = []
     started = time.perf_counter()
@@ -272,8 +285,13 @@ def run_gpu_particle_campaign(jobs: list[dict], steps: int, batch_size: int, out
             batch = GpuParticleBatch(batch_jobs)
             batch_number += 1
             report_every = max(1, min(2000, steps // 100 or 1))
+            preview_every = max(1, int(live_snapshot_every))
+            if live_previews:
+                batch.write_snapshots()
             for tick in range(steps):
                 batch.step()
+                if live_previews and ((tick + 1) % preview_every == 0 or tick + 1 == steps):
+                    batch.write_snapshots()
                 if progress and ((tick + 1) % report_every == 0 or tick + 1 == steps):
                     fraction = (tick + 1) / steps
                     progress("gpu-particle", completed + len(batch_jobs) * fraction, len(jobs),

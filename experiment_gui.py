@@ -52,6 +52,7 @@ class ExperimentApp(tk.Tk):
         self.live_warning = tk.StringVar(value="Live previews off - lowest overhead mode.")
         self.live_cards: dict[str, dict] = {}
         self.live_images: dict[str, tk.PhotoImage] = {}
+        self.live_refresh_pending = False
         self.run_rows: dict[str, str] = {}
         self.row_paths: dict[str, str] = {}
         self.visual_filter: set[str] | None = None
@@ -727,6 +728,7 @@ class ExperimentApp(tk.Tk):
                 job["live_snapshot_path"] = str(snapshot_path)
                 job["live_snapshot_every"] = max(25, min(250, int(self.fields["Sample every"].get())))
                 self._add_live_card(str(snapshot_path), index, job["label"], job["seed"], job["live_snapshot_every"])
+        self._schedule_live_refresh()
         self.stop_event.clear()
         self.adaptive_campaign_active = False
         self.run_mode = "broad" if broad else "grid"
@@ -850,6 +852,12 @@ class ExperimentApp(tk.Tk):
 
     def _toggle_live_previews(self) -> None:
         self.live_warning.set("WARNING: live previews add rendering and file I/O; many runs at once can cause extreme lag." if self.live_previews.get() else "Live previews off - lowest overhead mode.")
+        self._schedule_live_refresh()
+
+    def _schedule_live_refresh(self) -> None:
+        if self.live_previews.get() and self.live_cards and not self.live_refresh_pending:
+            self.live_refresh_pending = True
+            self.after(0, self._refresh_live_previews)
 
     @staticmethod
     def _duration(seconds: float) -> str:
@@ -996,6 +1004,7 @@ class ExperimentApp(tk.Tk):
             self._relayout_live_cards()
 
     def _refresh_live_previews(self) -> None:
+        self.live_refresh_pending = False
         now = time.time()
         refreshing = 0
         for path, card in self.live_cards.items():
@@ -1028,8 +1037,7 @@ class ExperimentApp(tk.Tk):
                 card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nFRAME READ ERROR • {str(error)[:90]}')
         if self.live_cards:
             self.view_status.set(f"{len(self.live_cards)} simulations • {refreshing} updating now")
-        if self.live_previews.get() and self.live_cards:
-            self.after(750, self._refresh_live_previews)
+        self._schedule_live_refresh()
 
     def _add_live_card(self, path: str, index: int, label: str, seed: int, interval: int = 0) -> None:
         card = ttk.Frame(self.visual_inner, padding=8, relief="ridge")
@@ -1150,6 +1158,7 @@ class ExperimentApp(tk.Tk):
         try:
             jobs = self.jobs()
             batch_size = max(1, int(self.fields["GPU batch"].get()))
+            sample_every = max(1, int(self.fields["Sample every"].get()))
         except (TypeError, ValueError) as error:
             messagebox.showerror("Invalid GPU particle setup", str(error))
             return
@@ -1165,6 +1174,10 @@ class ExperimentApp(tk.Tk):
             snapshot.unlink(missing_ok=True)
             job["snapshot_path"] = str(snapshot)
             self._add_run_row(str(snapshot), index, job["label"], job["seed"])
+            if self.live_previews.get():
+                live_every = max(25, min(1000, sample_every))
+                self._add_live_card(str(snapshot), index, job["label"], job["seed"], live_every)
+        self._schedule_live_refresh()
         self.stop_event.clear()
         self.run_mode = "adaptive-particle" if self.adaptive_campaign_active else "particle-gpu"
         self.last_report_path = None
@@ -1177,13 +1190,16 @@ class ExperimentApp(tk.Tk):
             self._set_run_row(job["snapshot_path"], "RUNNING")
         self.view_status.set(f"{len(jobs)} particle worlds • GPU batches active")
         self._log_event(f"Started {self.run_mode}: {len(jobs)} worlds in GPU batches of {batch_size}")
-        self.worker = threading.Thread(target=self._run_gpu_particle, args=(jobs, int(self.fields["Steps"].get()), batch_size, output), daemon=True)
+        self.worker = threading.Thread(target=self._run_gpu_particle,
+                                       args=(jobs, int(self.fields["Steps"].get()), batch_size, output), daemon=True)
         self.worker.start()
 
     def _run_gpu_particle(self, jobs: list[dict], steps: int, batch_size: int, output: Path) -> None:
         try:
             report = run_gpu_particle_campaign(jobs, steps, batch_size, output,
-                                               self.gpu_particle_progress, self.stop_event.is_set)
+                                               self.gpu_particle_progress, self.stop_event.is_set,
+                                               live_previews=self.live_previews.get(),
+                                               live_snapshot_every=max(25, min(1000, int(self.fields["Sample every"].get()))))
             self.after(0, self.add_gpu_particle_report, report)
         except Exception as error:
             self.after(0, self.gpu_particle_failed, str(error))
