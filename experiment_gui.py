@@ -1089,7 +1089,8 @@ class ExperimentApp(tk.Tk):
                 card["meta"].configure(text=f'{card["run"]} • {card["label"]} • seed {card["seed"]}\nFRAME READ ERROR • {str(error)[:90]}')
         if self.live_cards:
             self.view_status.set(f"{len(self.live_cards)} simulations • {refreshing} updating now")
-        self._schedule_live_refresh()
+        if self.run_active and self.live_cards:
+            self._schedule_live_refresh()
 
     def _add_live_card(self, path: str, index: int, label: str, seed: int, interval: int = 0) -> None:
         card = ttk.Frame(self.visual_inner, padding=8, relief="ridge")
