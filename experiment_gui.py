@@ -14,6 +14,7 @@ from tkinter import filedialog, messagebox, ttk
 from broad_sweep import latin_hypercube
 from adaptive_config import build_next_config
 from experiments import run_condition, run_particle_condition
+from gui_config import delete_preset, list_presets, load_preset, save_preset
 from gpu_sweep import run_gpu_particle_campaign, screen_and_replay
 from morrow import reproduction_preflight
 
@@ -63,6 +64,11 @@ class ExperimentApp(tk.Tk):
         self.adaptive_source_path: Path | None = None
         self.run_started_at = 0.0
         self.eta_text = tk.StringVar(value="ETA: -")
+        self.preset_name = tk.StringVar()
+        self.preset_choice = tk.StringVar()
+        self.report_choice = tk.StringVar()
+        self.report_paths: dict[str, Path] = {}
+        self.summary_vars: dict[str, tk.StringVar] = {}
         self._build()
         self._load_initial_adaptive()
 
@@ -70,13 +76,225 @@ class ExperimentApp(tk.Tk):
         widget.bind("<Enter>", lambda _event: self.help_text.set(text))
         widget.bind("<FocusIn>", lambda _event: self.help_text.set(text))
 
+    def _config_snapshot(self) -> dict:
+        return {
+            "schema": "bev-novus-gui-config-v1",
+            "fields": {name: variable.get() for name, variable in self.fields.items()},
+            "engine": self.engine.get(),
+            "controls": {"reproduce": self.reproduce.get(), "mutate": self.mutate.get(),
+                          "recycle": self.recycle.get(), "spatial": self.spatial.get()},
+            "live_previews": self.live_previews.get(),
+        }
+
+    def _apply_config(self, config: dict) -> None:
+        for name, value in config.get("fields", {}).items():
+            if name in self.fields:
+                self.fields[name].set(str(value))
+        if config.get("engine") in ("Field", "Particle hybrid"):
+            self.engine.set(config["engine"])
+        controls = config.get("controls", {})
+        for name, variable in (("reproduce", self.reproduce), ("mutate", self.mutate),
+                               ("recycle", self.recycle), ("spatial", self.spatial)):
+            if name in controls:
+                variable.set(bool(controls[name]))
+        self.live_previews.set(bool(config.get("live_previews", False)))
+        self._toggle_live_previews()
+
+    def _refresh_presets(self) -> None:
+        self.preset_box.configure(values=list_presets())
+
+    def _refresh_reports(self) -> None:
+        results_dir = Path(__file__).with_name("Results")
+        paths = sorted(results_dir.glob("*.json")) + sorted((results_dir / "adaptive-campaign").glob("*.json"))
+        self.report_paths = {}
+        labels = []
+        for path in paths:
+            label = str(path.relative_to(results_dir))
+            self.report_paths[label] = path
+            labels.append(label)
+        self.report_box.configure(values=labels)
+        if self.report_choice.get() not in self.report_paths:
+            preferred = next((name for name in ("gui-particle-gpu-latest.json", "gui-gpu-latest.json") if name in self.report_paths), "")
+            self.report_choice.set(preferred or (labels[0] if labels else ""))
+
+    def _preferred_report(self) -> Path | None:
+        selected = self.report_paths.get(self.report_choice.get().strip())
+        if selected and selected.name != "adaptive-next.json":
+            return selected
+        for name in ("gui-particle-gpu-latest.json", "gui-gpu-latest.json"):
+            if name in self.report_paths:
+                return self.report_paths[name]
+        return None
+
+    @staticmethod
+    def _new_output_dir(name: str) -> Path:
+        root = Path(__file__).with_name("Results") / name
+        path = root / f"run-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1000000:06d}"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @staticmethod
+    def _archive_report(prefix: str, report: dict) -> Path:
+        root = Path(__file__).with_name("Results")
+        root.mkdir(parents=True, exist_ok=True)
+        path = root / f"{prefix}-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1000000:06d}.json"
+        path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        return path
+
+    def _clear_run_view(self) -> None:
+        self.results.clear()
+        self.gpu_report = None
+        self.particle_gpu_report = None
+        for child in self.visual_inner.winfo_children():
+            child.destroy()
+        self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
+        self.run_table.delete(*self.run_table.get_children())
+        self.visual_filter = None
+        self.visual_scale = 2
+        self._update_summary()
+
+    def _update_summary(self, completed: int | None = None, total: int | None = None) -> None:
+        rows = self.results
+
+        def number(row: dict, key: str) -> float:
+            try:
+                return float(row.get(key, 0) or 0)
+            except (TypeError, ValueError):
+                return 0.0
+
+        finished = len(rows) if completed is None else completed
+        expected = len(rows) if total is None else total
+        live = sum(number(row, "live") > 0 for row in rows)
+        births = sum(number(row, "births") for row in rows)
+        if self.summary_vars:
+            self.summary_vars["finished"].set(f"{finished}/{expected}")
+            self.summary_vars["live"].set(str(live))
+            self.summary_vars["births"].set(f"{births:,.0f}")
+
+    def load_report(self) -> None:
+        if self.stop_button["state"] == "normal" and not messagebox.askyesno(
+                "Load report", "A run is active. Replace its live dashboard with a saved report?"):
+            return
+        label = self.report_choice.get().strip()
+        path = self.report_paths.get(label)
+        if not path:
+            messagebox.showinfo("Report history", "Choose a saved report first.")
+            return
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            if not isinstance(report, dict):
+                raise ValueError("That JSON file is not a report object.")
+            rows = report.get("replays") or report.get("results") or report.get("screening") or []
+            if not isinstance(rows, list) or not rows:
+                raise ValueError("That JSON file does not contain report rows.")
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            messagebox.showerror("Report history", str(error))
+            return
+        self._clear_run_view()
+        self.results = [row for row in rows if isinstance(row, dict)]
+        if "replays" in report:
+            self.gpu_report = report
+        if report.get("backend", "").startswith("gpu-particle"):
+            self.particle_gpu_report = report
+        for index, result in enumerate(self.results, 1):
+            snapshot = result.get("_snapshot_path") or result.get("snapshot_path") or f"report:{index}"
+            label_text = result.get("label", f"row-{index:04d}")
+            self._add_run_row(snapshot, index, label_text, result.get("seed", ""), "COMPLETE")
+            self._set_run_row(snapshot, "COMPLETE", result)
+            if Path(snapshot).exists():
+                self._add_live_card(snapshot, index, label_text, result.get("seed", ""))
+                try:
+                    image = tk.PhotoImage(file=snapshot).zoom(self.visual_scale, self.visual_scale)
+                    self.live_images[snapshot] = image
+                    self.live_cards[snapshot]["image"].configure(image=image)
+                    self.live_cards[snapshot]["state"] = "complete"
+                    meta = f'RUN {index:04d} • {label_text} • seed {result.get("seed", "")}\nCOMPLETE • {result.get("live", "")} live'
+                    self.live_cards[snapshot]["meta"].configure(text=meta)
+                except (tk.TclError, OSError):
+                    pass
+        self.progress.configure(maximum=max(1, len(self.results)), value=len(self.results))
+        self._update_summary(len(self.results), len(self.results))
+        self.eta_text.set("ETA: historical")
+        self.status.set(f"Loaded report: {label}")
+        self.view_status.set(f"Historical report • {len(self.results)} rows loaded")
+        self.workspace.select(self.runs_frame)
+
+    def save_preset(self) -> None:
+        name = self.preset_name.get().strip() or self.preset_choice.get().strip()
+        try:
+            path = save_preset(name, self._config_snapshot())
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Configuration", str(error))
+            return
+        self.preset_choice.set(path.stem)
+        self._refresh_presets()
+        self.status.set(f"Saved configuration: {path.stem}")
+
+    def load_preset(self) -> None:
+        name = self.preset_choice.get().strip()
+        if not name:
+            messagebox.showinfo("Configuration", "Choose a saved configuration first.")
+            return
+        try:
+            self._apply_config(load_preset(name))
+        except (OSError, ValueError, json.JSONDecodeError) as error:
+            messagebox.showerror("Configuration", str(error))
+            return
+        self.preset_name.set(name)
+        self.status.set(f"Loaded configuration: {name}")
+
+    def delete_preset(self) -> None:
+        name = self.preset_choice.get().strip()
+        if not name:
+            return
+        if not messagebox.askyesno("Delete configuration", f"Delete saved configuration '{name}'?"):
+            return
+        try:
+            delete_preset(name)
+        except OSError as error:
+            messagebox.showerror("Configuration", str(error))
+            return
+        self.preset_choice.set("")
+        self.preset_name.set("")
+        self._refresh_presets()
+        self.status.set(f"Deleted configuration: {name}")
+
     def _build(self) -> None:
-        settings = ttk.Notebook(self)
-        settings.pack(fill="x", padx=10, pady=(10, 6))
+        try:
+            ttk.Style(self).theme_use("clam")
+        except tk.TclError:
+            pass
+        self.geometry("1380x900")
+        self.minsize(1080, 720)
+        self.status = tk.StringVar(value="Ready")
+        self.view_status = tk.StringVar(value="No runs yet")
+
+        outer = ttk.Frame(self, padding=12)
+        outer.pack(fill="both", expand=True)
+        header = ttk.Frame(outer)
+        header.pack(fill="x", pady=(0, 10))
+        title_box = ttk.Frame(header)
+        title_box.pack(side="left", fill="x", expand=True)
+        ttk.Label(title_box, text="BEV NOVUS", font=("Segoe UI", 18, "bold")).pack(anchor="w")
+        ttk.Label(title_box, text="Experiment studio  /  configure, run, observe, iterate", foreground="#667085").pack(anchor="w")
+        status_box = ttk.Frame(header, padding=(12, 6))
+        status_box.pack(side="right")
+        ttk.Label(status_box, textvariable=self.status, font=("Segoe UI", 10, "bold"), anchor="e").pack(anchor="e")
+        ttk.Label(status_box, textvariable=self.eta_text, foreground="#667085", anchor="e").pack(anchor="e")
+
+        shell = ttk.PanedWindow(outer, orient="horizontal")
+        shell.pack(fill="both", expand=True)
+        config_panel = ttk.Frame(shell, padding=(0, 0, 10, 0))
+        dashboard = ttk.Frame(shell, padding=(10, 0, 0, 0))
+        shell.add(config_panel, weight=0)
+        shell.add(dashboard, weight=1)
+
+        ttk.Label(config_panel, text="SETUP", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 5))
+        settings = ttk.Notebook(config_panel)
+        settings.pack(fill="x", pady=(0, 8))
         field_specs = {
             "Core": [("Seeds", "1,2,3"), ("Steps", "200000"), ("Body yield", "0.30,0.40,0.50"),
-                     ("Decay", "0.02,0.03,0.04"), ("Particle decay", "0.0005,0.001,0.002"),
-                     ("Sample every", "1000")],
+                     ("Decay", "0.02,0.03,0.04"), ("Particle decay", "0.0005,0.001,0.002"), ("Sample every", "1000")],
             "Performance": [("Workers", "3"), ("Broad configs", "256"), ("GPU screen steps", "20000"),
                             ("GPU batch", "64"), ("Replay top", "8")],
             "Adaptive": [("Adaptive generations", "1"), ("Adaptive configs", "24"), ("Adaptive elites", "6")],
@@ -86,111 +304,150 @@ class ExperimentApp(tk.Tk):
             "Steps": "Number of simulation steps for each run. Larger values reveal longer-term persistence but take longer.",
             "Body yield": "Fraction of consumed resource converted into body mass. The remainder becomes waste.",
             "Decay": "Per-step body-mass decay for field-engine runs. Higher values make persistence harder.",
-            "Particle decay": "Per-step body-mass decay for Particle hybrid runs. These lower values are tuned for particle-scale dynamics.",
-            "Sample every": "How often the run records metrics and refreshes checkpoint data.",
-            "Workers": "Number of parallel worker processes. More workers can finish grids faster but use more CPU and memory.",
-            "Broad configs": "Number of Latin-hypercube parameter configurations used by Broad sweep or GPU screening.",
-            "GPU screen steps": "Short screening horizon for GPU runs before the strongest configurations are replayed on CPU.",
-            "GPU batch": "Number of GPU worlds advanced together. Larger batches can improve throughput if GPU memory allows.",
+            "Particle decay": "Per-step body-mass decay for Particle hybrid runs. Lower values match particle-scale dynamics.",
+            "Sample every": "How often a run records metrics and refreshes checkpoint data.",
+            "Workers": "Number of parallel CPU worker processes. More workers use more CPU and memory.",
+            "Broad configs": "Number of sampled parameter configurations used by broad or GPU screening.",
+            "GPU screen steps": "Short GPU screening horizon before selected configurations are replayed.",
+            "GPU batch": "Number of GPU worlds advanced together. Larger batches need more GPU memory.",
             "Replay top": "Number of top GPU-screened configurations replayed for the full Steps duration.",
-            "Adaptive generations": "Number of automatic result-to-next-run iterations. Each generation is scored, perturbed, and run again.",
-            "Adaptive configs": "Number of parameter configurations generated per adaptive generation.",
-            "Adaptive elites": "Number of top configurations copied unchanged into each next generation.",
+            "Adaptive generations": "Number of automatic result-to-next-run iterations.",
+            "Adaptive configs": "Number of configurations generated per adaptive generation.",
+            "Adaptive elites": "Number of top configurations copied unchanged into the next generation.",
         }
         for tab_name, specs in field_specs.items():
             tab = ttk.Frame(settings, padding=6)
             settings.add(tab, text=tab_name)
             for index, (label, default) in enumerate(specs):
-                row, column = divmod(index, 3)
-                ttk.Label(tab, text=label).grid(row=row * 2, column=column, sticky="w", padx=8, pady=(3, 0))
+                row, column = divmod(index, 2)
+                ttk.Label(tab, text=label).grid(row=row * 2, column=column, sticky="w", padx=4, pady=(3, 0))
                 variable = tk.StringVar(value=default)
                 self.fields[label] = variable
-                entry = ttk.Entry(tab, textvariable=variable, width=22)
-                entry.grid(row=row * 2 + 1, column=column, sticky="ew", padx=8, pady=(0, 3))
+                entry = ttk.Entry(tab, textvariable=variable, width=16)
+                entry.grid(row=row * 2 + 1, column=column, sticky="ew", padx=4, pady=(0, 3))
                 self._help(entry, explanations[label])
-            for column in range(3):
+            for column in range(2):
                 tab.columnconfigure(column, weight=1)
 
-        rules = ttk.LabelFrame(self, text="Engine and rules")
-        rules.pack(fill="x", padx=10, pady=(0, 6))
-        ttk.Label(rules, text="Engine").pack(side="left", padx=(8, 4))
-        engine_box = ttk.Combobox(rules, textvariable=self.engine, values=("Field", "Particle hybrid"), state="readonly", width=16)
-        engine_box.pack(side="left", padx=(0, 12))
-        self._help(engine_box, "Simulation engine. Field runs use the established grid model; Particle hybrid runs use force-bearing particles coupled to resource and waste fields.")
+        library = ttk.LabelFrame(config_panel, text="Saved configurations")
+        library.pack(fill="x", pady=(0, 8))
+        ttk.Label(library, text="Choose").grid(row=0, column=0, sticky="w", padx=6, pady=5)
+        self.preset_box = ttk.Combobox(library, textvariable=self.preset_choice, state="readonly", width=22)
+        self.preset_box.grid(row=0, column=1, columnspan=2, sticky="ew", padx=6, pady=5)
+        ttk.Label(library, text="Name").grid(row=1, column=0, sticky="w", padx=6, pady=5)
+        preset_name = ttk.Entry(library, textvariable=self.preset_name)
+        preset_name.grid(row=1, column=1, columnspan=2, sticky="ew", padx=6, pady=5)
+        load_button = ttk.Button(library, text="Load", command=self.load_preset)
+        load_button.grid(row=2, column=0, sticky="ew", padx=6, pady=5)
+        save_button = ttk.Button(library, text="Save", command=self.save_preset)
+        save_button.grid(row=2, column=1, sticky="ew", padx=6, pady=5)
+        delete_button = ttk.Button(library, text="Delete", command=self.delete_preset)
+        delete_button.grid(row=2, column=2, sticky="ew", padx=6, pady=5)
+        for column in range(3):
+            library.columnconfigure(column, weight=1)
+        for widget, text in ((self.preset_box, "Choose a saved configuration managed by the GUI."),
+                             (preset_name, "Name used when saving the current setup as a reusable configuration."),
+                             (load_button, "Apply the selected saved setup to the visible controls."),
+                             (save_button, "Save the current controls as a reusable setup in the GUI library."),
+                             (delete_button, "Delete the selected saved setup from the GUI library.")):
+            self._help(widget, text)
+        self._refresh_presets()
+
+        rules = ttk.LabelFrame(config_panel, text="Engine and rules")
+        rules.pack(fill="x", pady=(0, 8))
+        ttk.Label(rules, text="Engine").grid(row=0, column=0, sticky="w", padx=6, pady=5)
+        engine_box = ttk.Combobox(rules, textvariable=self.engine, values=("Field", "Particle hybrid"), state="readonly", width=17)
+        engine_box.grid(row=0, column=1, columnspan=2, sticky="ew", padx=6, pady=5)
+        self._help(engine_box, "Field uses the established grid model. Particle hybrid uses force-bearing particles coupled to resource and waste fields.")
         self.reproduce = tk.BooleanVar(value=True)
         self.mutate = tk.BooleanVar(value=True)
         self.recycle = tk.BooleanVar(value=True)
         self.spatial = tk.BooleanVar(value=True)
-        for label, variable in (("Seed emission", self.reproduce), ("Mutation", self.mutate),
-                                ("Recycling", self.recycle), ("Spatial resources", self.spatial)):
+        rule_help = {
+            "Seed emission": "Allow the field engine to emit new seed bodies. Particle reproduction is not implemented yet.",
+            "Mutation": "Allow inherited trait variation in field-engine births.",
+            "Recycling": "Return recyclable waste to the resource pool.",
+            "Spatial resources": "Keep resource patches localized; off creates a well-mixed control.",
+        }
+        for index, (label, variable) in enumerate((("Seed emission", self.reproduce), ("Mutation", self.mutate),
+                                                    ("Recycling", self.recycle), ("Spatial resources", self.spatial))):
             checkbox = ttk.Checkbutton(rules, text=label, variable=variable)
-            checkbox.pack(side="left", padx=(0, 14))
-            self._help(checkbox, {
-                "Seed emission": "Allow the field engine to emit new seed bodies. Particle hybrid reproduction is not implemented yet.",
-                "Mutation": "Allow inherited trait variation in field-engine births.",
-                "Recycling": "Return recyclable waste to the resource pool instead of leaving it unavailable.",
-                "Spatial resources": "Keep resource patches spatially localized. Turning this off creates a well-mixed resource control.",
-            }[label])
+            checkbox.grid(row=1 + index // 2, column=index % 2, sticky="w", padx=6, pady=4)
+            self._help(checkbox, rule_help[label])
         live_check = ttk.Checkbutton(rules, text="Live previews", variable=self.live_previews, command=self._toggle_live_previews)
-        live_check.pack(side="left", padx=(0, 8))
-        self._help(live_check, "Show periodically refreshed images for active runs. This adds disk and GUI work; many simultaneous previews can cause extreme lag.")
-        ttk.Label(rules, textvariable=self.live_warning).pack(side="left", padx=(0, 8))
+        live_check.grid(row=3, column=0, columnspan=2, sticky="w", padx=6, pady=4)
+        self._help(live_check, "Show refreshed images for active runs. This adds disk and GUI work; many previews can cause lag.")
+        ttk.Label(rules, textvariable=self.live_warning, foreground="#996c00", wraplength=280).grid(row=4, column=0, columnspan=3, sticky="w", padx=6, pady=(2, 6))
+        for column in range(3):
+            rules.columnconfigure(column, weight=1)
 
-        actions = ttk.Frame(self)
-        actions.pack(fill="x", padx=10, pady=(0, 4))
-        run_actions = ttk.LabelFrame(actions, text="Run")
-        run_actions.pack(side="left", fill="x", expand=True, padx=(0, 5))
-        campaign_actions = ttk.LabelFrame(actions, text="Campaigns")
-        campaign_actions.pack(side="left", fill="x", expand=True, padx=(5, 0))
-        self.start_button = ttk.Button(run_actions, text="Run grid", command=self.start)
-        self.start_button.pack(side="left", padx=6, pady=5)
-        self._help(self.start_button, "Run the Cartesian product of the selected seeds and parameter values in parallel.")
-        self.broad_button = ttk.Button(run_actions, text="Broad sweep", command=lambda: self.start(broad=True))
-        self.broad_button.pack(side="left", padx=6, pady=5)
-        self._help(self.broad_button, "Generate a broad Latin-hypercube sample across the major rules and run it in parallel.")
-        self.gpu_button = ttk.Button(campaign_actions, text="GPU screen + replay", command=self.start_gpu)
-        self.gpu_button.pack(side="left", padx=5, pady=5)
-        self._help(self.gpu_button, "Screen many configurations on the GPU, then replay the strongest candidates with the full experiment settings.")
-        self.overnight_button = ttk.Button(campaign_actions, text="Overnight", command=self.start_overnight)
-        self.overnight_button.pack(side="left", padx=5, pady=5)
-        self._help(self.overnight_button, "Load the long-running campaign preset and start GPU screening plus replay.")
-        self.particle_campaign_button = ttk.Button(campaign_actions, text="Particle persistence", command=self.start_particle_campaign)
-        self.particle_campaign_button.pack(side="left", padx=5, pady=5)
-        self._help(self.particle_campaign_button, "Run 96 particle-hybrid persistence conditions: 8 seeds, 3 body yields, and 4 low-decay values for 200,000 steps.")
-        self.adaptive_campaign_button = ttk.Button(campaign_actions, text="Adaptive campaign", command=self.start_adaptive_campaign)
-        self.adaptive_campaign_button.pack(side="left", padx=5, pady=5)
-        self._help(self.adaptive_campaign_button, "Run the configured number of adaptive generations automatically from a selected result report.")
-        self.stop_button = ttk.Button(run_actions, text="Stop", command=self.stop, state="disabled")
-        self.stop_button.pack(side="left", padx=6, pady=5)
-        self._help(self.stop_button, "Request a safe stop after the current worker results finish reporting.")
-        export_button = ttk.Button(run_actions, text="Export", command=self.export)
-        export_button.pack(side="left", padx=6, pady=5)
-        self._help(export_button, "Save the currently displayed results or GPU report as a JSON file.")
-        adaptive_button = ttk.Button(campaign_actions, text="Load adaptive", command=self.load_adaptive_config)
-        adaptive_button.pack(side="left", padx=5, pady=5)
-        self._help(adaptive_button, "Read a previous result report, generate a bounded next-generation parameter sweep, and load its defaults into this GUI.")
-        ttk.Label(self, textvariable=self.help_text, relief="groove", anchor="w", justify="left", wraplength=1040).pack(fill="x", padx=10, pady=(4, 6))
-        self.status = tk.StringVar(value="Ready")
-        status_row = ttk.Frame(self)
-        status_row.pack(fill="x", padx=10, pady=(0, 3))
-        ttk.Label(status_row, textvariable=self.status, anchor="w").pack(side="left", fill="x", expand=True)
-        ttk.Label(status_row, textvariable=self.eta_text, anchor="e").pack(side="right")
-        self.progress = ttk.Progressbar(self, mode="determinate", maximum=1, value=0)
-        self.progress.pack(fill="x", padx=10, pady=(0, 6))
+        actions = ttk.LabelFrame(config_panel, text="Actions")
+        actions.pack(fill="x", pady=(0, 8))
+        action_specs = (("start_button", "Run grid", self.start, "Run the Cartesian product of the selected values."),
+                        ("broad_button", "Broad sweep", lambda: self.start(broad=True), "Sample a broad parameter space."),
+                        ("gpu_button", "GPU screen + replay", self.start_gpu, "Screen many worlds on GPU, then replay selected candidates."),
+                        ("overnight_button", "Overnight", self.start_overnight, "Load and start the long campaign preset."),
+                        ("particle_campaign_button", "Particle persistence", self.start_particle_campaign, "Run the standard particle persistence panel."),
+                        ("adaptive_campaign_button", "Adaptive campaign", self.start_adaptive_campaign, "Run automatic result-to-next-generation iterations."),
+                        ("stop_button", "Stop", self.stop, "Request a safe stop after current workers report."),
+                        ("export_button", "Export results", self.export, "Save the current report as JSON."),
+                        ("adaptive_button", "Load adaptive file", self.load_adaptive_config, "Generate and load a next configuration from a chosen report."))
+        for index, (attribute, label, command, explanation) in enumerate(action_specs):
+            button = ttk.Button(actions, text=label, command=command)
+            button.grid(row=index // 2, column=index % 2, sticky="ew", padx=5, pady=4)
+            setattr(self, attribute, button)
+            self._help(button, explanation)
+        self.stop_button.configure(state="disabled")
+        for column in range(2):
+            actions.columnconfigure(column, weight=1)
+        ttk.Label(config_panel, textvariable=self.help_text, relief="groove", anchor="w", justify="left", wraplength=330).pack(fill="x", pady=(0, 6))
 
-        self.workspace = ttk.Notebook(self)
-        self.workspace.pack(fill="both", expand=True, padx=10, pady=(8, 10))
+        dashboard_status = ttk.Frame(dashboard)
+        dashboard_status.pack(fill="x", pady=(0, 6))
+        ttk.Label(dashboard_status, text="LIVE DASHBOARD", font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Label(dashboard_status, textvariable=self.view_status, foreground="#667085").pack(side="left", padx=12)
+        summary = ttk.Frame(dashboard)
+        summary.pack(fill="x", pady=(0, 8))
+        for title in ("finished", "live", "births"):
+            self.summary_vars[title] = tk.StringVar(value="0")
+        for title, label in (("finished", "FINISHED"), ("live", "LIVE WORLDS"), ("births", "BIRTHS")):
+            card = ttk.LabelFrame(summary, text=label)
+            card.pack(side="left", fill="x", expand=True, padx=(0, 6))
+            ttk.Label(card, textvariable=self.summary_vars[title], font=("Segoe UI", 14, "bold")).pack(anchor="w", padx=8, pady=5)
+        self.progress = ttk.Progressbar(dashboard, mode="determinate", maximum=1, value=0)
+        self.progress.pack(fill="x", pady=(0, 8))
+        history = ttk.LabelFrame(dashboard, text="Report history")
+        history.pack(fill="x", pady=(0, 8))
+        ttk.Label(history, text="Saved report").pack(side="left", padx=6, pady=5)
+        self.report_box = ttk.Combobox(history, textvariable=self.report_choice, state="readonly", width=42)
+        self.report_box.pack(side="left", fill="x", expand=True, padx=6, pady=5)
+        report_load = ttk.Button(history, text="Load report", command=self.load_report)
+        report_load.pack(side="left", padx=3, pady=5)
+        report_refresh = ttk.Button(history, text="Refresh", command=self._refresh_reports)
+        report_refresh.pack(side="left", padx=3, pady=5)
+        self._help(self.report_box, "Choose a saved report discovered in Results or Results/adaptive-campaign.")
+        self._help(report_load, "Load historical rows and matching saved frames into the dashboard without opening the filesystem.")
+        self._help(report_refresh, "Rescan the GUI-managed Results report list.")
+        self._refresh_reports()
 
-        runs_frame = ttk.Frame(self.workspace)
-        self.workspace.add(runs_frame, text="Runs")
+        self.workspace = ttk.Notebook(dashboard)
+        self.workspace.pack(fill="both", expand=True)
+        runs_frame = ttk.Frame(self.workspace, padding=4)
+        self.runs_frame = runs_frame
+        self.workspace.add(runs_frame, text="Runs & results")
         columns = ("run", "condition", "seed", "state", "live", "births", "viable")
         self.run_table = ttk.Treeview(runs_frame, columns=columns, show="headings", selectmode="extended")
         headings = {"run": "Run", "condition": "Condition", "seed": "Seed", "state": "State", "live": "Live", "births": "Births", "viable": "Viable"}
         for column in columns:
             self.run_table.heading(column, text=headings[column])
-            self.run_table.column(column, width=240 if column == "condition" else 75, anchor="center")
+            self.run_table.column(column, width=230 if column == "condition" else 78, anchor="center")
         self.run_table.column("state", width=110)
-        self.run_table.pack(fill="both", expand=True)
+        run_scroll = ttk.Scrollbar(runs_frame, orient="vertical", command=self.run_table.yview)
+        self.run_table.configure(yscrollcommand=run_scroll.set)
+        self.run_table.grid(row=0, column=0, sticky="nsew")
+        run_scroll.grid(row=0, column=1, sticky="ns")
+        runs_frame.rowconfigure(0, weight=1)
+        runs_frame.columnconfigure(0, weight=1)
         self.run_table.bind("<<TreeviewSelect>>", self._on_run_selection)
         self.run_table.bind("<Double-1>", lambda _event: self.focus_selected())
 
@@ -199,11 +456,10 @@ class ExperimentApp(tk.Tk):
         self.workspace.add(visual_frame, text="Visual explorer")
         visual_tools = ttk.Frame(visual_frame)
         visual_tools.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(6, 2))
-        ttk.Button(visual_tools, text="All visuals", command=self.show_all_visuals).pack(side="left")
+        ttk.Button(visual_tools, text="Show all", command=self.show_all_visuals).pack(side="left")
         ttk.Button(visual_tools, text="Focus selected", command=self.focus_selected).pack(side="left", padx=6)
-        ttk.Button(visual_tools, text="Compare selected", command=self.compare_selected).pack(side="left")
-        ttk.Label(visual_tools, text="Select one run to focus or 2-4 runs to compare.").pack(side="left", padx=10)
-        self.view_status = tk.StringVar(value="No runs yet")
+        ttk.Button(visual_tools, text="Compare 2-4", command=self.compare_selected).pack(side="left")
+        ttk.Label(visual_tools, text="Select runs in Runs & results, then focus or compare.", foreground="#667085").pack(side="left", padx=10)
         ttk.Label(visual_frame, textvariable=self.view_status, anchor="w").grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(2, 2))
         visual_frame.rowconfigure(2, weight=1)
         visual_frame.columnconfigure(0, weight=1)
@@ -287,8 +543,7 @@ class ExperimentApp(tk.Tk):
         self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
         self.run_table.delete(*self.run_table.get_children())
         self.visual_filter = None; self.visual_scale = 2
-        snapshot_dir = Path(__file__).with_name("Results") / "gui-snapshots"
-        snapshot_dir.mkdir(parents=True, exist_ok=True)
+        snapshot_dir = self._new_output_dir("gui-snapshots")
         for index, job in enumerate(jobs, 1):
             snapshot_path = snapshot_dir / f"run-{index:04d}.ppm"
             snapshot_path.unlink(missing_ok=True)
@@ -378,7 +633,8 @@ class ExperimentApp(tk.Tk):
         except (TypeError, ValueError) as error:
             messagebox.showerror("Invalid adaptive setup", str(error))
             return
-        chosen = filedialog.askopenfilename(
+        chosen_path = self._preferred_report()
+        chosen = str(chosen_path) if chosen_path else filedialog.askopenfilename(
             title="Choose starting result report", filetypes=(("JSON", "*.json"), ("All files", "*.*")))
         if not chosen:
             return
@@ -595,7 +851,7 @@ class ExperimentApp(tk.Tk):
         self.gpu_button.configure(state="disabled"); self.overnight_button.configure(state="disabled"); self.particle_campaign_button.configure(state="disabled"); self.adaptive_campaign_button.configure(state="disabled"); self.stop_button.configure(state="normal")
         self.status.set(f"Preparing {self.gpu_screen_total} GPU screens")
         configs = latin_hypercube(config_count, seed=7)
-        output = Path(__file__).with_name("Results") / "gpu-snapshots"
+        output = self._new_output_dir("gpu-snapshots")
         controls = {"reproduce": self.reproduce.get(), "mutate": self.mutate.get(),
                     "recycle": self.recycle.get(), "spatial": self.spatial.get()}
         self.worker = threading.Thread(target=self._run_gpu,
@@ -643,8 +899,7 @@ class ExperimentApp(tk.Tk):
         self.visual_filter = None; self.visual_scale = 2
         for child in self.visual_inner.winfo_children():
             child.destroy()
-        output = Path(__file__).with_name("Results") / "gpu-particle-snapshots"
-        output.mkdir(parents=True, exist_ok=True)
+        output = self._new_output_dir("gpu-particle-snapshots")
         for index, job in enumerate(jobs, 1):
             snapshot = output / f"particle-gpu-{index:04d}.ppm"
             snapshot.unlink(missing_ok=True)
@@ -686,6 +941,8 @@ class ExperimentApp(tk.Tk):
         report_path = Path(__file__).with_name("Results") / "gui-particle-gpu-latest.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        self._archive_report("gui-particle-gpu", report)
+        self._refresh_reports()
         self.results = report["results"]
         for completed, result in enumerate(self.results, 1):
             self.add_result(result, completed, self.total_jobs)
@@ -739,6 +996,8 @@ class ExperimentApp(tk.Tk):
         report_path = Path(__file__).with_name("Results") / "gui-gpu-latest.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        self._archive_report("gui-gpu", report)
+        self._refresh_reports()
         self.results = report["replays"]
         for result in self.results:
             self.add_result(result, int(self.progress["value"]), self.total_jobs)
@@ -798,6 +1057,7 @@ class ExperimentApp(tk.Tk):
             self._set_run_row(snapshot, "COMPLETE", result)
             card["meta"].configure(text=f'{card["run"]} - {result["label"]} - seed {result["seed"]}\nCOMPLETE - {result["live"]} live')
         self.progress.configure(value=completed)
+        self._update_summary(completed, total)
         self._update_eta(completed, total)
         self.status.set(f"Results generated: {completed}/{total} — {total - completed} remaining")
 
@@ -810,6 +1070,7 @@ class ExperimentApp(tk.Tk):
         self.adaptive_campaign_button.configure(state="normal")
         self.stop_button.configure(state="disabled")
         self.progress.configure(value=completed)
+        self._update_summary(completed, total)
         self.eta_text.set("ETA: stopped" if self.stop_event.is_set() else "ETA: complete")
         self.status.set("Stopped" if self.stop_event.is_set() else f"Finished — {completed}/{total} results generated")
         self.view_status.set(f"{len(self.live_cards)} simulations • {completed}/{total} {'stopped' if self.stop_event.is_set() else 'complete'}")
