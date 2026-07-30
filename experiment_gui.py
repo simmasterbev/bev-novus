@@ -306,6 +306,35 @@ class ExperimentApp(tk.Tk):
         self._log_event("Restored setup from historical report")
         self.help_text.set("Historical setup restored. Adjust any fields, then choose a run action.")
 
+    def delete_report(self) -> None:
+        if self.run_active:
+            messagebox.showinfo("Run active", "Stop the active run before deleting a report.")
+            return
+        label = self.report_choice.get().strip()
+        path = self.report_paths.get(label)
+        if not path:
+            messagebox.showinfo("Report history", "Choose a saved report first.")
+            return
+        results_dir = Path(__file__).with_name("Results").resolve()
+        allowed = {results_dir, results_dir / "adaptive-campaign"}
+        try:
+            resolved = path.resolve()
+            if resolved.parent not in allowed or resolved.suffix.lower() != ".json":
+                raise ValueError("Only GUI report files under Results can be deleted.")
+        except (OSError, ValueError) as error:
+            messagebox.showerror("Report history", str(error))
+            return
+        if not messagebox.askyesno("Delete report", f"Delete report '{label}'? Snapshot images will be kept."):
+            return
+        try:
+            resolved.unlink()
+        except OSError as error:
+            messagebox.showerror("Report history", str(error))
+            return
+        self._refresh_reports()
+        self.status.set(f"Deleted report: {label}")
+        self._log_event(f"Deleted report: {label}; snapshot files kept")
+
     def save_preset(self) -> None:
         name = self.preset_name.get().strip() or self.preset_choice.get().strip()
         try:
@@ -593,11 +622,14 @@ class ExperimentApp(tk.Tk):
         report_load.pack(side="left", padx=3, pady=5)
         self.report_setup_button = ttk.Button(history, text="Use setup", command=self.apply_report_setup)
         self.report_setup_button.pack(side="left", padx=3, pady=5)
+        report_delete = ttk.Button(history, text="Delete", command=self.delete_report)
+        report_delete.pack(side="left", padx=3, pady=5)
         report_refresh = ttk.Button(history, text="Refresh", command=self._refresh_reports)
         report_refresh.pack(side="left", padx=3, pady=5)
         self._help(self.report_box, "Choose a saved report discovered in Results or Results/adaptive-campaign.")
         self._help(report_load, "Load historical rows and matching saved frames into the dashboard without opening the filesystem.")
         self._help(self.report_setup_button, "Restore the saved GUI controls from the selected report so it can be rerun or modified.")
+        self._help(report_delete, "Delete the selected GUI report JSON after confirmation. Saved visualization frames are kept.")
         self._help(report_refresh, "Rescan the GUI-managed Results report list.")
         self._refresh_reports()
 
