@@ -76,12 +76,27 @@ class ExperimentApp(tk.Tk):
         self.sort_column = "run"
         self.sort_reverse = False
         self.detail_text = tk.StringVar(value="Select a run to inspect its metrics and saved frame.")
+        self.activity_list: tk.Listbox | None = None
+        self.activity_items: list[str] = []
         self._build()
         self._load_initial_adaptive()
 
     def _help(self, widget: tk.Widget, text: str) -> None:
         widget.bind("<Enter>", lambda _event: self.help_text.set(text))
         widget.bind("<FocusIn>", lambda _event: self.help_text.set(text))
+
+    def _log_event(self, message: str) -> None:
+        entry = f"{time.strftime('%H:%M:%S')}  {message}"
+        self.activity_items.insert(0, entry)
+        del self.activity_items[100:]
+        if self.activity_list is not None:
+            self.activity_list.delete(0, tk.END)
+            self.activity_list.insert(0, *self.activity_items)
+
+    def clear_activity(self) -> None:
+        self.activity_items.clear()
+        if self.activity_list is not None:
+            self.activity_list.delete(0, tk.END)
 
     def _set_run_controls(self, running: bool) -> None:
         state = "disabled" if running else "normal"
@@ -250,6 +265,7 @@ class ExperimentApp(tk.Tk):
         self._update_summary(len(self.results), len(self.results))
         self.eta_text.set("ETA: historical")
         self.status.set(f"Loaded report: {label}")
+        self._log_event(f"Loaded report: {label}")
         self.view_status.set(f"Historical report • {len(self.results)} rows loaded")
         if self.report_config:
             self.help_text.set("Report setup is available. Use 'Use setup' to restore its controls, then rerun or modify it.")
@@ -268,6 +284,7 @@ class ExperimentApp(tk.Tk):
             messagebox.showerror("Report setup", str(error))
             return
         self.status.set("Restored setup from report; ready to rerun")
+        self._log_event("Restored setup from historical report")
         self.help_text.set("Historical setup restored. Adjust any fields, then choose a run action.")
 
     def save_preset(self) -> None:
@@ -280,6 +297,7 @@ class ExperimentApp(tk.Tk):
         self.preset_choice.set(path.stem)
         self._refresh_presets()
         self.status.set(f"Saved configuration: {path.stem}")
+        self._log_event(f"Saved setup: {path.stem}")
 
     def load_preset(self) -> None:
         name = self.preset_choice.get().strip()
@@ -293,6 +311,7 @@ class ExperimentApp(tk.Tk):
             return
         self.preset_name.set(name)
         self.status.set(f"Loaded configuration: {name}")
+        self._log_event(f"Loaded setup: {name}")
 
     def delete_preset(self) -> None:
         name = self.preset_choice.get().strip()
@@ -309,6 +328,7 @@ class ExperimentApp(tk.Tk):
         self.preset_name.set("")
         self._refresh_presets()
         self.status.set(f"Deleted configuration: {name}")
+        self._log_event(f"Deleted setup: {name}")
 
     def _build(self) -> None:
         try:
@@ -530,6 +550,21 @@ class ExperimentApp(tk.Tk):
         self.visual_inner.bind("<Configure>", lambda _: self.visual_canvas.configure(scrollregion=self.visual_canvas.bbox("all")))
         self.visual_canvas.bind("<Configure>", lambda event: self._relayout_live_cards(event.width))
 
+        activity_frame = ttk.Frame(self.workspace, padding=8)
+        self.workspace.add(activity_frame, text="Activity")
+        activity_toolbar = ttk.Frame(activity_frame)
+        activity_toolbar.pack(fill="x", pady=(0, 6))
+        ttk.Label(activity_toolbar, text="Run timeline", font=("Segoe UI", 10, "bold")).pack(side="left")
+        ttk.Button(activity_toolbar, text="Clear", command=self.clear_activity).pack(side="right")
+        activity_scroll = ttk.Scrollbar(activity_frame, orient="vertical")
+        self.activity_list = tk.Listbox(activity_frame, height=12, activestyle="none", exportselection=False,
+                                        borderwidth=0, highlightthickness=0)
+        activity_scroll.configure(command=self.activity_list.yview)
+        self.activity_list.configure(yscrollcommand=activity_scroll.set)
+        self.activity_list.pack(side="left", fill="both", expand=True)
+        activity_scroll.pack(side="right", fill="y")
+        self._help(self.activity_list, "Persistent timeline of important run, report, adaptive-generation, and error events.")
+
     def jobs(self, broad: bool = False) -> list[dict]:
         seeds = numbers(self.fields["Seeds"].get(), int)
         engine = "particle" if self.engine.get() == "Particle hybrid" else "field"
@@ -622,6 +657,7 @@ class ExperimentApp(tk.Tk):
         self.progress.configure(maximum=self.total_jobs, value=0)
         self._set_run_controls(True)
         self.status.set(f"Running 0/{len(jobs)} — {workers} parallel workers — generating results")
+        self._log_event(f"Started {self.run_mode} run with {len(jobs)} worlds and {workers} workers")
         self.worker = threading.Thread(target=self._run, args=(jobs, workers), daemon=True)
         self.worker.start()
 
@@ -648,6 +684,7 @@ class ExperimentApp(tk.Tk):
             if defaults.get("Engine"):
                 self.engine.set(defaults["Engine"])
             self.status.set(f"Adaptive generation {config.get('generation', '?')} loaded: {len(config.get('configs', []))} configs")
+            self._log_event(f"Loaded adaptive generation {config.get('generation', '?')} ({len(config.get('configs', []))} configs)")
             self.help_text.set(f"Adaptive config saved to {output}. Review it, then start the next run.")
         except (OSError, ValueError, json.JSONDecodeError) as error:
             messagebox.showerror("Adaptive config error", str(error))
@@ -679,9 +716,11 @@ class ExperimentApp(tk.Tk):
                 self.engine.set(defaults["Engine"])
             self.fields["Adaptive configs"].set(str(len(configs)))
             self.status.set(f"Adaptive generation {config.get('generation', '?')} loaded: {len(configs)} configs ready")
+            self._log_event(f"Startup adaptive generation {config.get('generation', '?')} ready ({len(configs)} configs)")
             self.help_text.set(f"Loaded {path.name}. Review the adaptive settings, then start the next run when ready.")
         except (OSError, ValueError, json.JSONDecodeError):
             self.status.set("Ready - adaptive-next.json could not be loaded")
+            self._log_event("Adaptive startup file could not be loaded; using ordinary defaults")
 
     def start_adaptive_campaign(self) -> None:
         try:
@@ -719,6 +758,7 @@ class ExperimentApp(tk.Tk):
             self.run_started_at = time.perf_counter()
             self.fields["Adaptive configs"].set(str(len(self.adaptive_configs)))
             self.help_text.set(f"Adaptive campaign loaded from {source_name}; generation {self.adaptive_generation}/{generations} is ready.")
+            self._log_event(f"Adaptive campaign starting at generation {self.adaptive_generation}/{generations}")
             self.start_gpu_particle()
         except (OSError, ValueError, json.JSONDecodeError) as error:
             messagebox.showerror("Adaptive campaign error", str(error))
@@ -949,6 +989,7 @@ class ExperimentApp(tk.Tk):
         self.progress.configure(maximum=self.total_jobs, value=0)
         self._set_run_controls(True)
         self.status.set(f"Preparing {self.gpu_screen_total} GPU screens")
+        self._log_event(f"Started field-GPU campaign: {self.gpu_screen_total} screens, {replay_top * len(seeds)} replays")
         configs = latin_hypercube(config_count, seed=7)
         output = self._new_output_dir("gpu-snapshots")
         controls = {"reproduce": self.reproduce.get(), "mutate": self.mutate.get(),
@@ -1015,6 +1056,7 @@ class ExperimentApp(tk.Tk):
         for job in jobs:
             self._set_run_row(job["snapshot_path"], "RUNNING")
         self.view_status.set(f"{len(jobs)} particle worlds • GPU batches active")
+        self._log_event(f"Started {self.run_mode}: {len(jobs)} worlds in GPU batches of {batch_size}")
         self.worker = threading.Thread(target=self._run_gpu_particle, args=(jobs, int(self.fields["Steps"].get()), batch_size, output), daemon=True)
         self.worker.start()
 
@@ -1044,6 +1086,7 @@ class ExperimentApp(tk.Tk):
         report = dict(report)
         report["gui_config"] = self._config_snapshot()
         self.particle_gpu_report = report
+        self._log_event(f"Particle-GPU report received: {len(report.get('results', []))} worlds")
         report_path = Path(__file__).with_name("Results") / "gui-particle-gpu-latest.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -1060,6 +1103,7 @@ class ExperimentApp(tk.Tk):
             generation_path.write_text(json.dumps(generation_report, indent=2), encoding="utf-8")
             if self.adaptive_generation < self.adaptive_generation_total and not self.stop_event.is_set():
                 self.status.set(f"Generation {self.adaptive_generation}/{self.adaptive_generation_total} complete - preparing next generation")
+                self._log_event(f"Adaptive generation {self.adaptive_generation} complete; preparing next generation")
                 self.after(100, self._start_next_adaptive_generation, generation_path)
                 return
             self.adaptive_campaign_active = False
@@ -1073,6 +1117,7 @@ class ExperimentApp(tk.Tk):
             self.adaptive_configs = config["configs"]
             self.adaptive_generation = int(config["generation"])
             self.adaptive_source_path = report_path
+            self._log_event(f"Prepared adaptive generation {self.adaptive_generation} from {report_path.name}")
             self.start_gpu_particle()
         except (OSError, ValueError, json.JSONDecodeError) as error:
             self.adaptive_campaign_active = False
@@ -1080,6 +1125,7 @@ class ExperimentApp(tk.Tk):
 
     def gpu_particle_failed(self, error: str) -> None:
         self.adaptive_campaign_active = False
+        self._log_event(f"Particle-GPU campaign failed: {error}")
         self.finished(int(self.progress["value"]), self.total_jobs)
         messagebox.showerror("GPU particle campaign failed", error)
 
@@ -1101,6 +1147,7 @@ class ExperimentApp(tk.Tk):
         report = dict(report)
         report["gui_config"] = self._config_snapshot()
         self.gpu_report = report
+        self._log_event(f"Field-GPU report received: {len(report.get('replays', []))} replays")
         report_path = Path(__file__).with_name("Results") / "gui-gpu-latest.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
         report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -1112,6 +1159,7 @@ class ExperimentApp(tk.Tk):
         self.finished(self.total_jobs, self.total_jobs)
 
     def gpu_failed(self, error: str) -> None:
+        self._log_event(f"Field-GPU campaign failed: {error}")
         self.finished(int(self.progress["value"]), self.total_jobs)
         messagebox.showerror("GPU sweep failed", error)
 
@@ -1167,6 +1215,8 @@ class ExperimentApp(tk.Tk):
         self.progress.configure(value=completed)
         self._update_summary(completed, total)
         self._update_eta(completed, total)
+        if completed == 1 or completed == total or completed % max(1, total // 10) == 0:
+            self._log_event(f"Results generated: {completed}/{total}")
         self.status.set(f"Results generated: {completed}/{total} — {total - completed} remaining")
 
     def finished(self, completed: int, total: int) -> None:
@@ -1189,9 +1239,13 @@ class ExperimentApp(tk.Tk):
         self.status.set("Stopped" if self.stop_event.is_set() else f"Finished — {completed}/{total} results generated")
         if self.last_report_path and not self.stop_event.is_set():
             self.status.set(f"Finished - {completed}/{total} results saved as {self.last_report_path.name}")
+        self._log_event("Run stopped" if self.stop_event.is_set() else f"Run finished: {completed}/{total} results")
         self.view_status.set(f"{len(self.live_cards)} simulations • {completed}/{total} {'stopped' if self.stop_event.is_set() else 'complete'}")
 
     def stop(self) -> None:
+        if not self.run_active:
+            return
+        self._log_event("Stop requested; waiting for active workers")
         self.stop_event.set()
         self.status.set("Stopping…")
 
@@ -1204,6 +1258,7 @@ class ExperimentApp(tk.Tk):
             exportable = self.particle_gpu_report or self.gpu_report or self._report_rows()
             Path(path).write_text(json.dumps(exportable, indent=2), encoding="utf-8")
             self.status.set(f"Saved {Path(path).name}")
+            self._log_event(f"Exported report: {Path(path).name}")
 
 
 if __name__ == "__main__":
