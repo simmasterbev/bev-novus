@@ -55,6 +55,7 @@ class ExperimentApp(tk.Tk):
         self.row_paths: dict[str, str] = {}
         self.visual_filter: set[str] | None = None
         self.visual_scale = 2
+        self.visual_zoom_choice = tk.StringVar(value="2x")
         self.adaptive_configs: list[dict] | None = None
         self.adaptive_campaign_active = False
         self.adaptive_generation = 0
@@ -217,6 +218,7 @@ class ExperimentApp(tk.Tk):
         self.run_table.delete(*self.run_table.get_children())
         self.visual_filter = None
         self.visual_scale = 2
+        self.visual_zoom_choice.set("2x")
         self._update_summary()
 
     def _update_summary(self, completed: int | None = None, total: int | None = None) -> None:
@@ -665,15 +667,22 @@ class ExperimentApp(tk.Tk):
         ttk.Button(visual_tools, text="Show all", command=self.show_all_visuals).pack(side="left")
         ttk.Button(visual_tools, text="Focus selected", command=self.focus_selected).pack(side="left", padx=6)
         ttk.Button(visual_tools, text="Compare 2-4", command=self.compare_selected).pack(side="left")
+        ttk.Label(visual_tools, text="Zoom").pack(side="left", padx=(14, 4))
+        zoom_box = ttk.Combobox(visual_tools, textvariable=self.visual_zoom_choice,
+                                values=("1x", "2x", "3x", "5x"), state="readonly", width=4)
+        zoom_box.pack(side="left")
+        zoom_box.bind("<<ComboboxSelected>>", lambda _event: self._set_visual_zoom(self.visual_zoom_choice.get()))
         ttk.Label(visual_tools, text="Select runs in Runs & results, then focus or compare.", foreground="#667085").pack(side="left", padx=10)
-        ttk.Label(visual_frame, textvariable=self.view_status, anchor="w").grid(row=1, column=0, columnspan=2, sticky="ew", padx=8, pady=(2, 2))
-        visual_frame.rowconfigure(2, weight=1)
+        ttk.Label(visual_frame, text="Color channels: blue = resources  •  green = body  •  red = waste",
+                  foreground="#667085", anchor="w").grid(row=1, column=0, columnspan=2, sticky="ew", padx=8)
+        ttk.Label(visual_frame, textvariable=self.view_status, anchor="w").grid(row=2, column=0, columnspan=2, sticky="ew", padx=8, pady=(2, 2))
+        visual_frame.rowconfigure(3, weight=1)
         visual_frame.columnconfigure(0, weight=1)
         self.visual_canvas = tk.Canvas(visual_frame, background="black", highlightthickness=0)
         scrollbar = ttk.Scrollbar(visual_frame, orient="vertical", command=self.visual_canvas.yview)
         self.visual_canvas.configure(yscrollcommand=scrollbar.set)
-        self.visual_canvas.grid(row=2, column=0, sticky="nsew")
-        scrollbar.grid(row=2, column=1, sticky="ns")
+        self.visual_canvas.grid(row=3, column=0, sticky="nsew")
+        scrollbar.grid(row=3, column=1, sticky="ns")
         self.visual_inner = ttk.Frame(self.visual_canvas)
         self.visual_window = self.visual_canvas.create_window((8, 8), window=self.visual_inner, anchor="nw")
         self.visual_inner.bind("<Configure>", lambda _: self.visual_canvas.configure(scrollregion=self.visual_canvas.bbox("all")))
@@ -778,7 +787,7 @@ class ExperimentApp(tk.Tk):
             child.destroy()
         self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
         self.run_table.delete(*self.run_table.get_children())
-        self.visual_filter = None; self.visual_scale = 2
+        self.visual_filter = None; self.visual_scale = 2; self.visual_zoom_choice.set("2x")
         snapshot_dir = self._new_output_dir("gui-snapshots")
         for index, job in enumerate(jobs, 1):
             snapshot_path = snapshot_dir / f"run-{index:04d}.ppm"
@@ -1021,7 +1030,7 @@ class ExperimentApp(tk.Tk):
 
     def show_all_visuals(self) -> None:
         self.visual_filter = None
-        self.visual_scale = 2
+        self._set_visual_zoom("2x")
         self.workspace.select(self.visual_frame)
         self._relayout_live_cards()
 
@@ -1031,7 +1040,7 @@ class ExperimentApp(tk.Tk):
             messagebox.showinfo("Choose a run", "Select one run in the Runs tab first.")
             return
         self.visual_filter = {selected[0]}
-        self.visual_scale = 5
+        self._set_visual_zoom("5x")
         self.workspace.select(self.visual_frame)
         self._relayout_live_cards()
 
@@ -1041,9 +1050,21 @@ class ExperimentApp(tk.Tk):
             messagebox.showinfo("Choose runs", "Select 2 to 4 runs in the Runs tab to compare.")
             return
         self.visual_filter = set(selected)
-        self.visual_scale = 3
+        self._set_visual_zoom("3x")
         self.workspace.select(self.visual_frame)
         self._relayout_live_cards()
+
+    def _set_visual_zoom(self, value: str) -> None:
+        try:
+            scale = int(str(value).rstrip("x"))
+        except (TypeError, ValueError):
+            return
+        if scale not in (1, 2, 3, 5):
+            return
+        self.visual_scale = scale
+        self.visual_zoom_choice.set(f"{scale}x")
+        if hasattr(self, "visual_inner"):
+            self._relayout_live_cards()
 
     def _refresh_live_previews(self) -> None:
         now = time.time()
@@ -1146,7 +1167,7 @@ class ExperimentApp(tk.Tk):
         self.status.set(f"Preflight passed: {check['births']} mutation checks")
         self.results.clear(); self.gpu_report = None; self.report_config = None; self.last_report_path = None; self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
         self.run_table.delete(*self.run_table.get_children())
-        self.visual_filter = None; self.visual_scale = 2
+        self.visual_filter = None; self.visual_scale = 2; self.visual_zoom_choice.set("2x")
         for child in self.visual_inner.winfo_children():
             child.destroy()
         self.stop_event.clear()
@@ -1206,7 +1227,7 @@ class ExperimentApp(tk.Tk):
         self.results.clear(); self.gpu_report = None; self.particle_gpu_report = None; self.report_config = None; self.last_report_path = None
         self.live_cards.clear(); self.live_images.clear(); self.run_rows.clear(); self.row_paths.clear()
         self.run_table.delete(*self.run_table.get_children())
-        self.visual_filter = None; self.visual_scale = 2
+        self.visual_filter = None; self.visual_scale = 2; self.visual_zoom_choice.set("2x")
         for child in self.visual_inner.winfo_children():
             child.destroy()
         output = self._new_output_dir("gpu-particle-snapshots")
