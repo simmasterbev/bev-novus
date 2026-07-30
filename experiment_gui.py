@@ -608,6 +608,7 @@ class ExperimentApp(tk.Tk):
         self.run_table.configure(yscrollcommand=run_scroll.set)
         self.run_table.grid(row=0, column=0, sticky="nsew")
         run_scroll.grid(row=0, column=1, sticky="ns")
+        self._help(self.run_table, "Select one run to inspect it, or select 2-4 runs and use the Visual explorer to compare their saved frames.")
         details = ttk.LabelFrame(runs_frame, text="Selected run")
         details.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(6, 0))
         ttk.Label(details, textvariable=self.detail_text, justify="left", anchor="w", wraplength=900).pack(fill="x", padx=8, pady=7)
@@ -621,14 +622,22 @@ class ExperimentApp(tk.Tk):
         self.workspace.add(visual_frame, text="Visual explorer")
         visual_tools = ttk.Frame(visual_frame)
         visual_tools.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=(6, 2))
-        ttk.Button(visual_tools, text="Show all", command=self.show_all_visuals).pack(side="left")
-        ttk.Button(visual_tools, text="Focus selected", command=self.focus_selected).pack(side="left", padx=6)
-        ttk.Button(visual_tools, text="Compare 2-4", command=self.compare_selected).pack(side="left")
+        show_all = ttk.Button(visual_tools, text="Show all", command=self.show_all_visuals)
+        show_all.pack(side="left")
+        focus_selected = ttk.Button(visual_tools, text="Focus selected", command=self.focus_selected)
+        focus_selected.pack(side="left", padx=6)
+        compare_selected = ttk.Button(visual_tools, text="Compare 2-4", command=self.compare_selected)
+        compare_selected.pack(side="left")
         ttk.Label(visual_tools, text="Zoom").pack(side="left", padx=(14, 4))
         zoom_box = ttk.Combobox(visual_tools, textvariable=self.visual_zoom_choice,
                                 values=("1x", "2x", "3x", "5x"), state="readonly", width=4)
         zoom_box.pack(side="left")
         zoom_box.bind("<<ComboboxSelected>>", lambda _event: self._set_visual_zoom(self.visual_zoom_choice.get()))
+        for widget, text in ((show_all, "Show every available run frame in the auto-sized visual grid."),
+                             (focus_selected, "Show only the currently selected run frame at a larger size."),
+                             (compare_selected, "Show 2-4 selected run frames together for direct visual comparison."),
+                             (zoom_box, "Choose the display scale for visual frames; this changes presentation, not simulation resolution.")):
+            self._help(widget, text)
         ttk.Label(visual_tools, text="Select runs in Runs & results, then focus or compare.", foreground="#667085").pack(side="left", padx=10)
         ttk.Label(visual_frame, text="Color channels: blue = resources  •  green = body  •  red = waste",
                   foreground="#667085", anchor="w").grid(row=1, column=0, columnspan=2, sticky="ew", padx=8)
@@ -650,7 +659,9 @@ class ExperimentApp(tk.Tk):
         activity_toolbar = ttk.Frame(activity_frame)
         activity_toolbar.pack(fill="x", pady=(0, 6))
         ttk.Label(activity_toolbar, text="Run timeline", font=("Segoe UI", 10, "bold")).pack(side="left")
-        ttk.Button(activity_toolbar, text="Clear", command=self.clear_activity).pack(side="right")
+        clear_activity = ttk.Button(activity_toolbar, text="Clear", command=self.clear_activity)
+        clear_activity.pack(side="right")
+        self._help(clear_activity, "Clear the visible activity timeline. This does not stop a run or delete its reports.")
         activity_scroll = ttk.Scrollbar(activity_frame, orient="vertical")
         self.activity_list = tk.Listbox(activity_frame, height=12, activestyle="none", exportselection=False,
                                         borderwidth=0, highlightthickness=0)
