@@ -70,6 +70,7 @@ class ExperimentApp(tk.Tk):
         self.report_config: dict | None = None
         self.last_report_path: Path | None = None
         self.plan_text = tk.StringVar(value="Plan not calculated")
+        self.adaptive_status = tk.StringVar(value="No adaptive handoff loaded")
         self.run_started_at = 0.0
         self.eta_text = tk.StringVar(value="ETA: -")
         self.preset_name = tk.StringVar()
@@ -110,14 +111,34 @@ class ExperimentApp(tk.Tk):
             return
         if self.adaptive_configs and self.engine.get() == "Particle hybrid":
             mode = f"adaptive generation {self.adaptive_generation or '?'}"
+            source = self.adaptive_source_path.name if self.adaptive_source_path else "adaptive-next.json"
+            self.adaptive_status.set(f"Adaptive handoff: generation {self.adaptive_generation or '?'} • {len(self.adaptive_configs)} configs • {source}")
         else:
             mode = "Cartesian grid"
+            self.adaptive_status.set("No adaptive handoff active; Run grid uses the visible values.")
         self.plan_text.set(f"{len(jobs):,} worlds  •  {self.engine.get()}  •  {mode}")
 
     def preview_plan(self) -> None:
         self._update_plan_preview()
         self.status.set(f"Run plan: {self.plan_text.get()}")
         self._log_event(f"Checked run plan: {self.plan_text.get()}")
+
+    def clear_adaptive_handoff(self) -> None:
+        if self.run_active:
+            messagebox.showinfo("Run active", "Stop the active run before clearing the adaptive handoff.")
+            return
+        if not self.adaptive_configs:
+            self.status.set("No adaptive handoff to clear")
+            return
+        generation = self.adaptive_generation
+        self.adaptive_configs = None
+        self.adaptive_generation = 0
+        self.adaptive_source_path = None
+        self.adaptive_campaign_active = False
+        self._update_plan_preview()
+        self.status.set("Adaptive handoff cleared; ready for a standard run")
+        self.help_text.set("Adaptive candidates cleared. The next run will use the visible setup fields.")
+        self._log_event(f"Cleared adaptive handoff generation {generation}")
 
     def _set_run_controls(self, running: bool) -> None:
         state = "disabled" if running else "normal"
@@ -528,6 +549,11 @@ class ExperimentApp(tk.Tk):
         plan_button = ttk.Button(plan, text="Refresh", command=self.preview_plan)
         plan_button.pack(side="right", padx=6, pady=6)
         self._help(plan_button, "Validate the visible setup and show the number and type of worlds that will run.")
+        ttk.Label(plan, textvariable=self.adaptive_status, foreground="#667085", wraplength=330,
+                  justify="left").pack(fill="x", padx=6, pady=(0, 4))
+        clear_adaptive = ttk.Button(plan, text="Clear adaptive handoff", command=self.clear_adaptive_handoff)
+        clear_adaptive.pack(fill="x", padx=6, pady=(0, 6))
+        self._help(clear_adaptive, "Stop using the loaded adaptive candidate set. The next run will use the visible setup values.")
 
         actions = ttk.LabelFrame(config_panel, text="Actions")
         actions.pack(fill="x", pady=(0, 8))
