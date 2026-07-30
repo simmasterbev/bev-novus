@@ -15,7 +15,7 @@ from broad_sweep import latin_hypercube
 from adaptive_config import build_next_config
 from experiments import run_condition, run_particle_condition
 from gui_config import delete_preset, list_presets, load_preset, preset_exists, save_preset
-from gui_reports import archive_report, delete_report as delete_report_file, list_report_paths, read_report
+from gui_reports import archive_report, delete_report as delete_report_file, list_report_paths, read_report, write_json_atomic
 from gui_schema import EXPLANATIONS, FIELD_SPECS, dynamic_rules
 from gpu_sweep import run_gpu_particle_campaign, screen_and_replay
 from morrow import reproduction_preflight
@@ -404,7 +404,11 @@ class ExperimentApp(tk.Tk):
             filetypes=(("JSON configuration", "*.json"), ("All files", "*.*")))
         if not path:
             return
-        Path(path).write_text(json.dumps(self._config_snapshot(), indent=2), encoding="utf-8")
+        try:
+            write_json_atomic(Path(path), self._config_snapshot())
+        except OSError as error:
+            messagebox.showerror("Configuration export", str(error))
+            return
         self.status.set(f"Exported setup: {Path(path).name}")
         self._log_event(f"Exported setup: {Path(path).name}")
 
@@ -1286,7 +1290,7 @@ class ExperimentApp(tk.Tk):
         self._log_event(f"Particle-GPU report received: {len(report.get('results', []))} worlds")
         report_path = Path(__file__).with_name("Results") / "gui-particle-gpu-latest.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        write_json_atomic(report_path, report)
         self._archive_report("gui-particle-gpu", report)
         self._refresh_reports()
         self.results = report["results"]
@@ -1297,7 +1301,7 @@ class ExperimentApp(tk.Tk):
             campaign_dir.mkdir(parents=True, exist_ok=True)
             generation_path = campaign_dir / f"generation-{self.adaptive_generation:04d}.json"
             generation_report = {**report, "generation": self.adaptive_generation}
-            generation_path.write_text(json.dumps(generation_report, indent=2), encoding="utf-8")
+            write_json_atomic(generation_path, generation_report)
             if self.adaptive_generation < self.adaptive_generation_total and not self.stop_event.is_set():
                 self.status.set(f"Generation {self.adaptive_generation}/{self.adaptive_generation_total} complete - preparing next generation")
                 self._log_event(f"Adaptive generation {self.adaptive_generation} complete; preparing next generation")
@@ -1347,7 +1351,7 @@ class ExperimentApp(tk.Tk):
         self._log_event(f"Field-GPU report received: {len(report.get('replays', []))} replays")
         report_path = Path(__file__).with_name("Results") / "gui-gpu-latest.json"
         report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        write_json_atomic(report_path, report)
         self._archive_report("gui-gpu", report)
         self._refresh_reports()
         self.results = report["replays"]
@@ -1454,7 +1458,11 @@ class ExperimentApp(tk.Tk):
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=(("JSON", "*.json"), ("All files", "*.*")))
         if path:
             exportable = self.particle_gpu_report or self.gpu_report or self._report_rows()
-            Path(path).write_text(json.dumps(exportable, indent=2), encoding="utf-8")
+            try:
+                write_json_atomic(Path(path), exportable)
+            except OSError as error:
+                messagebox.showerror("Report export", str(error))
+                return
             self.status.set(f"Saved {Path(path).name}")
             self._log_event(f"Exported report: {Path(path).name}")
 

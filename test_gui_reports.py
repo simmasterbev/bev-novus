@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from gui_reports import archive_report, delete_report, list_report_paths, read_report
+from gui_reports import archive_report, delete_report, list_report_paths, read_report, write_json_atomic
 
 
 class GuiReportTests(unittest.TestCase):
@@ -13,9 +13,18 @@ class GuiReportTests(unittest.TestCase):
             report = {"backend": "gui-cpu", "results": [{"live": 1}]}
             saved = archive_report(root, "gui-grid", report)
             self.assertEqual(report, read_report(saved))
+            self.assertFalse(saved.with_suffix(".json.tmp").exists())
             self.assertEqual([saved], list_report_paths(root))
             delete_report(saved, root)
             self.assertFalse(saved.exists())
+
+    def test_atomic_json_replaces_existing_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "report.json"
+            write_json_atomic(path, {"results": [{"live": 1}]})
+            write_json_atomic(path, {"results": [{"live": 2}]})
+            self.assertEqual(2, read_report(path)["results"][0]["live"])
+            self.assertFalse(path.with_suffix(".json.tmp").exists())
 
     def test_adaptive_handoff_is_not_a_report_choice(self):
         with tempfile.TemporaryDirectory() as folder:

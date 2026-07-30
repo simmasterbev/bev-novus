@@ -10,6 +10,17 @@ from pathlib import Path
 _REPORT_VALIDATION_CACHE: dict[str, tuple[int, int, bool]] = {}
 
 
+def write_json_atomic(path: Path, data: object) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    try:
+        temporary.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return path
+
+
 def _is_loadable_report(path: Path) -> bool:
     try:
         stat = path.stat()
@@ -50,8 +61,7 @@ def read_report(path: Path) -> dict:
 def archive_report(results_dir: Path, prefix: str, report: dict) -> Path:
     results_dir.mkdir(parents=True, exist_ok=True)
     path = results_dir / f"{prefix}-{time.strftime('%Y%m%d-%H%M%S')}-{time.time_ns() % 1000000:06d}.json"
-    path.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    return path
+    return write_json_atomic(path, report)
 
 
 def delete_report(path: Path, results_dir: Path) -> None:
