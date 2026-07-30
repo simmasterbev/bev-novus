@@ -936,12 +936,26 @@ class ExperimentApp(tk.Tk):
     def _selected_paths(self) -> list[str]:
         return [self.row_paths[iid] for iid in self.run_table.selection() if iid in self.row_paths]
 
+    def _result_for_path(self, path: str) -> dict | None:
+        return next((row for row in self.results
+                     if row.get("_snapshot_path") == path or row.get("snapshot_path") == path), None)
+
     def _on_run_selection(self, _event=None) -> None:
         selected = self._selected_paths()
         for path, card in self.live_cards.items():
             card["card"].configure(relief="sunken" if path in selected else "ridge")
         if not selected:
             self.detail_text.set("Select a run to inspect its metrics and saved frame.")
+            return
+        selected_results = [result for path in selected if (result := self._result_for_path(path))]
+        if len(selected_results) > 1:
+            live = sum(float(result.get("live", 0) or 0) for result in selected_results)
+            births = sum(float(result.get("births", 0) or 0) for result in selected_results)
+            viable = sum(float(result.get("viable", 0) or 0) for result in selected_results)
+            self.detail_text.set(
+                f"{len(selected_results)} runs selected  •  combined live {live:,.0f}  •  "
+                f"births {births:,.0f}  •  viable {viable:,.0f}\n"
+                "Use Compare 2-4 in Visual explorer to inspect their frames together.")
             return
         path = selected[0]
         result = next((row for row in self.results
@@ -954,6 +968,15 @@ class ExperimentApp(tk.Tk):
             f'live {result.get("live", "")} • births {result.get("births", "")} • '
             f'viable {result.get("viable", "")} • mass drift {result.get("mass_drift", "")} • '
             f'finite {result.get("finite", "unknown")} • frame {result.get("_snapshot_path", "not saved")}')
+
+        config = result.get("config") if isinstance(result.get("config"), dict) else {}
+        if not config:
+            config = {name: result[name] for name in ("body_yield", "decay_rate", "metabolism", "resource_regrowth",
+                                                       "resource_capacity", "body_patches") if name in result}
+        config_text = ", ".join(f"{name}={value:g}" if isinstance(value, (int, float)) else f"{name}={value}"
+                                for name, value in list(config.items())[:6])
+        if config_text:
+            self.detail_text.set(self.detail_text.get() + f"\nparameters: {config_text}")
 
     def _select_path(self, path: str, focus: bool = False) -> None:
         iid = self.run_rows.get(path)
